@@ -135,6 +135,16 @@ def map_source_fields(source: str, records: list[dict]) -> dict[str, str | None]
         try:
             resolved = _llm_match(field_name, samples)
         except OllamaUnavailable:
+            resolved = None
+
+        if resolved is None:
+            # Either Ollama is down, or it's up but answered "unknown" --
+            # qwen2.5:3b is small enough that it sometimes says "unknown"
+            # for a field even when the right canonical field was sitting
+            # right in its own retrieved context (observed live with "ts"
+            # and "Date" both failing to map to created_at). Don't let a
+            # single small-model miss be the final word when a confident
+            # heuristic match exists.
             resolved = _heuristic_match(field_name)
 
         mapping[field_name] = resolved
