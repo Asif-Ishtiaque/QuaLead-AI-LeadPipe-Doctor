@@ -28,7 +28,7 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 PBI_PALETTE = ["#118DFF", "#12239E", "#E66C37", "#6B007B", "#E044A7", "#744EC2", "#D9B300", "#D64550"]
 STATUS_COLORS = {"clean": "#118DFF", "flagged": "#D9B300", "duplicate": "#6B007B", "invalid": "#D64550"}
 
-st.set_page_config(page_title="LeadPipe Doctor", page_icon="\U0001F4CA", layout="wide")
+st.set_page_config(page_title="QuaLead AI: LeadPipe Doctor", page_icon="\U0001F4CA", layout="wide")
 
 st.markdown(
     """
@@ -59,6 +59,9 @@ st.markdown(
     }
     .kpi-value { font-size: 1.7rem; font-weight: 700; color: #201F1E; line-height: 1.2; }
     .kpi-sub { font-size: 0.72rem; color: #8A8886; margin-top: 2px; }
+    div[data-testid="stButton"] {
+        display: flex; justify-content: flex-end; margin-top: 4px;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -104,7 +107,7 @@ with header_left:
     st.markdown(
         """
         <div class="lpd-header">
-            <span class="lpd-title">\U0001F4CA LeadPipe Doctor</span>
+            <span class="lpd-title">\U0001F4CA QuaLead AI: LeadPipe Doctor</span>
         </div>
         <div class="lpd-subtitle">Self-healing lead ingestion &mdash; live pipeline report</div>
         """,
@@ -246,6 +249,29 @@ with tab_overview:
             st.info("No invalid rows recorded yet.")
 
 with tab_quality:
+    st.subheader("Where the mess comes from")
+    src_col1, src_col2 = st.columns(2)
+    with src_col1:
+        st.caption("Invalid rows by source -- which feed's payloads fail validation most")
+        if not invalid.empty and "source" in invalid.columns:
+            counts = invalid["source"].value_counts().reset_index()
+            counts.columns = ["source", "count"]
+            fig = px.bar(counts, x="source", y="count", color="source", color_discrete_sequence=PBI_PALETTE)
+            fig.update_layout(showlegend=False, xaxis_title=None, yaxis_title="Invalid rows")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No invalid rows recorded yet.")
+    with src_col2:
+        st.caption("Duplicates by source -- which feed sends the most repeat submissions")
+        if not duplicates.empty and "source" in duplicates.columns:
+            counts = duplicates["source"].value_counts().reset_index()
+            counts.columns = ["source", "count"]
+            fig = px.bar(counts, x="source", y="count", color="source", color_discrete_sequence=PBI_PALETTE)
+            fig.update_layout(showlegend=False, xaxis_title=None, yaxis_title="Duplicates")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No duplicates recorded yet.")
+
     st.subheader("Most common validation failures")
     if not invalid.empty and "errors" in invalid.columns:
         parsed_errors = parse_json_column(invalid["errors"])
@@ -272,6 +298,34 @@ with tab_quality:
             st.info("Invalid rows exist, but no parseable error detail was found.")
     else:
         st.info("No invalid rows recorded yet.")
+
+    st.divider()
+    st.subheader("Compliance & completeness gaps")
+    st.caption(
+        "These leads pass schema validation, so they don't show up anywhere else as a problem -- "
+        "worth a human glance anyway."
+    )
+    gap_col1, gap_col2 = st.columns(2)
+    no_consent = pd.DataFrame()
+    with gap_col1:
+        if not leads.empty and "consent" in leads.columns:
+            no_consent = leads[leads["consent"] == False]  # noqa: E712 -- pandas bool column, not a Python identity check
+            rate = round(100 * len(no_consent) / len(leads), 1) if len(leads) else 0.0
+            st.metric("Leads without marketing consent", f"{len(no_consent):,}", f"{rate}% of clean + flagged", delta_color="off")
+        else:
+            st.metric("Leads without marketing consent", "0")
+    with gap_col2:
+        if not leads.empty and "campaign_id" in leads.columns:
+            no_campaign = leads[leads["campaign_id"].isna() | (leads["campaign_id"] == "")]
+            rate = round(100 * len(no_campaign) / len(leads), 1) if len(leads) else 0.0
+            st.metric("Leads with no campaign tag", f"{len(no_campaign):,}", f"{rate}% can't be attributed", delta_color="off")
+        else:
+            st.metric("Leads with no campaign tag", "0")
+
+    if not no_consent.empty:
+        with st.expander(f"Preview {min(len(no_consent), 25)} of {len(no_consent):,} leads collected without consent"):
+            cols = [c for c in ["first_name", "last_name", "email", "source", "quality_score", "status"] if c in no_consent.columns]
+            st.dataframe(no_consent[cols].head(25), use_container_width=True, hide_index=True)
 
 with tab_healing:
     st.subheader("Self-healing events")
