@@ -89,7 +89,9 @@ already do that for bad input).
 Respond with ONLY the complete corrected Python file content, no
 explanation, no markdown code fences."""
 
-    response = generate(prompt, timeout=60.0)
+    # a full-file rewrite is a long generation on CPU-only inference,
+    # especially for smaller/quantized models -- give it real headroom
+    response = generate(prompt, timeout=240.0)
     return _strip_code_fences(response)
 
 

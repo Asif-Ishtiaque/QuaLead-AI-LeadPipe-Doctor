@@ -77,7 +77,7 @@ queue.
 
 | Tool | Role | Why this one |
 |---|---|---|
-| **Ollama (qwen2.5)** | Field-mapping LLM + code-patching LLM | Free, runs fully local, no API keys, no rate limits, no data leaves the machine -- required for a pipeline that ingests PII. |
+| **Ollama (qwen2.5:3b by default)** | Field-mapping LLM + code-patching LLM | Free, runs fully local, no API keys, no rate limits, no data leaves the machine -- required for a pipeline that ingests PII. 3b is the default so the whole stack fits comfortably in ~4GB of RAM; bump `OLLAMA_MODEL` to `qwen2.5:7b` in docker-compose.yml for better patch quality if your machine has 8GB+ to spare for Docker. |
 | **LangGraph** | Self-healing agent orchestration | The retry/heal/human-review loop is a small explicit state machine, which is exactly what LangGraph's `StateGraph` models -- conditional edges instead of hand-rolled retry loops scattered through the code. |
 | **FastAPI** | HTTP entrypoint | Async-native, Pydantic-native (shares the same validation models), minimal boilerplate for a handful of ingest/stats routes. |
 | **pandas** | CSV parsing, batch transforms | Standard for tabular ingestion (Instagram/Google Form CSVs) and for feeding the DataFrame-shaped stats the dashboard needs. |
@@ -128,7 +128,7 @@ leadpipe-doctor/
 
 ```bash
 docker compose up -d          # start Postgres, Ollama, ChromaDB, API, dashboard
-docker compose exec ollama-init sh -c "ollama pull qwen2.5:7b && ollama pull nomic-embed-text"  # first run only, if ollama-init didn't finish
+docker compose exec ollama-init sh -c "ollama pull qwen2.5:3b && ollama pull nomic-embed-text"  # first run only, if ollama-init didn't finish
 python scripts/generate_data.py --total 100000    # generate the demo dataset locally
 ```
 
@@ -176,6 +176,15 @@ if Ollama isn't running locally -- see Limitations.
 
 ## Limitations and future work
 
+- **Model size is a memory/quality tradeoff.** `qwen2.5:3b` is the default
+  because it reliably loads in ~4GB of RAM alongside Postgres, ChromaDB,
+  and the API -- important on machines with 8GB total RAM, where Docker
+  Desktop can't safely be given enough memory for `qwen2.5:7b` (a 7B model
+  needs ~5-6GB+ of headroom on top of everything else and will get OOM-
+  killed on a tight budget). If your machine has more RAM to spare, set
+  `OLLAMA_MODEL: qwen2.5:7b` in docker-compose.yml (and pull it via
+  `docker compose exec ollama-init ollama pull qwen2.5:7b`) for
+  meaningfully better field-mapping and code-patching quality.
 - **No real conversion labels.** The XGBoost scorer is trained on
   pseudo-labels derived from the rule-based scorer plus noise (see
   `ml/train.py`), since this demo has no historical "did this lead

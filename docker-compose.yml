@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # ---- Local LLM runtime (free, open-source, no external API) ----
   ollama:
@@ -10,7 +8,9 @@ services:
     volumes:
       - ollama_models:/root/.ollama
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+      # the ollama/ollama image has no curl -- use its own CLI to ask the
+      # locally-running server to list models as the readiness check
+      test: ["CMD-SHELL", "ollama list || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -19,13 +19,15 @@ services:
   ollama-init:
     image: ollama/ollama:latest
     container_name: leadpipe-ollama-init
+    environment:
+      OLLAMA_HOST: http://ollama:11434
     depends_on:
-      - ollama
+      ollama:
+        condition: service_healthy
     entrypoint: >
       sh -c "
-        until curl -sf http://ollama:11434/api/tags; do sleep 2; done;
-        OLLAMA_HOST=http://ollama:11434 ollama pull qwen2.5:7b;
-        OLLAMA_HOST=http://ollama:11434 ollama pull nomic-embed-text;
+        ollama pull qwen2.5:3b &&
+        ollama pull nomic-embed-text
       "
 
   # ---- Vector store for RAG field-mapping memory ----
@@ -72,7 +74,7 @@ services:
     environment:
       DATABASE_URL: postgresql://leadpipe:leadpipe@db:5432/leadpipe
       OLLAMA_HOST: http://ollama:11434
-      OLLAMA_MODEL: qwen2.5:7b
+      OLLAMA_MODEL: qwen2.5:3b
       EMBEDDING_MODEL: nomic-embed-text
       CHROMA_HOST: chromadb
       CHROMA_PORT: 8000

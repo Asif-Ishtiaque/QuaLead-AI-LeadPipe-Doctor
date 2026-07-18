@@ -8,9 +8,13 @@ data/raw/*.json
 data/raw/*.csv
 data/processed/*.parquet
 data/processed/*.csv
+data/processed/*.duckdb*
 data/human_review/*.json
+data/human_review/*.jsonl
 ml/models/*.joblib
 ml/models/*.json
 ml/mlruns/
 chroma_persist/
+*.bak
+*.demo_backup
 .env
