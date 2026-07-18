@@ -120,7 +120,7 @@ with header_right:
         """,
         unsafe_allow_html=True,
     )
-    if st.button("Refresh now", use_container_width=True):
+    if st.button("Refresh"):
         fetch.clear()
         st.rerun()
 
@@ -157,7 +157,7 @@ with st.sidebar:
         score_range = (0.0, 100.0)
 
     st.divider()
-    st.caption("Data pulled live from the FastAPI service every 5s (or on demand via Refresh now).")
+    st.caption("Data pulled live from the FastAPI service every 5s (or on demand via Refresh).")
 
 if not leads.empty:
     filtered_leads = leads[
@@ -227,6 +227,24 @@ with tab_overview:
     else:
         st.info("No scored leads match the current filters.")
 
+    dup_col, invalid_col = st.columns(2)
+    with dup_col:
+        st.subheader("Recent duplicates")
+        if not duplicates.empty:
+            cols = [c for c in ["first_name", "last_name", "email", "source", "duplicate_of_lead_id"] if c in duplicates.columns]
+            st.dataframe(duplicates[cols].tail(25), use_container_width=True, hide_index=True)
+        else:
+            st.info("No duplicates recorded yet.")
+    with invalid_col:
+        st.subheader("Recent invalid rows")
+        if not invalid.empty:
+            preview = invalid.tail(25).copy()
+            if "record" in preview.columns:
+                preview["record"] = parse_json_column(preview["record"])
+            st.dataframe(preview, use_container_width=True, hide_index=True)
+        else:
+            st.info("No invalid rows recorded yet.")
+
 with tab_quality:
     st.subheader("Most common validation failures")
     if not invalid.empty and "errors" in invalid.columns:
@@ -254,24 +272,6 @@ with tab_quality:
             st.info("Invalid rows exist, but no parseable error detail was found.")
     else:
         st.info("No invalid rows recorded yet.")
-
-    dup_col, invalid_col = st.columns(2)
-    with dup_col:
-        st.subheader("Recent duplicates")
-        if not duplicates.empty:
-            cols = [c for c in ["first_name", "last_name", "email", "source", "duplicate_of_lead_id"] if c in duplicates.columns]
-            st.dataframe(duplicates[cols].tail(25), use_container_width=True, hide_index=True)
-        else:
-            st.info("No duplicates recorded yet.")
-    with invalid_col:
-        st.subheader("Recent invalid rows")
-        if not invalid.empty:
-            preview = invalid.tail(25).copy()
-            if "record" in preview.columns:
-                preview["record"] = parse_json_column(preview["record"])
-            st.dataframe(preview, use_container_width=True, hide_index=True)
-        else:
-            st.info("No invalid rows recorded yet.")
 
 with tab_healing:
     st.subheader("Self-healing events")
