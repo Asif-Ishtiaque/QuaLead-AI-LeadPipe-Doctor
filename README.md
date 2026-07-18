@@ -58,7 +58,7 @@ queue.
         │                                                                  │
         │  run_pipeline = cleaning (app/cleaning) -> validation            │
         │  (app/validation, Pydantic) -> dedup (app/deduplication,         │
-        │  rapidfuzz) -> scoring (app/scoring, XGBoost)                    │
+        │  exact email/phone match) -> scoring (app/scoring, XGBoost)      │
         │                                                                  │
         │  heal = capture traceback -> ask Ollama to rewrite                │
         │  app/cleaning/transforms.py -> validate the patch is syntactically│
@@ -91,7 +91,7 @@ locally without an account.
 | **ChromaDB** | RAG memory for field mapping | Stores canonical schema descriptions and every past field-mapping decision as embeddings, so mapping quality compounds instead of re-asking the LLM the same question for every batch. | Apache-2.0 |
 | **nomic-embed-text (via Ollama)** | Embeddings | Free, local, good enough for short field-name-plus-sample-value strings. | Apache-2.0 |
 | **XGBoost** | Lead scoring | Handles the mixed categorical/numeric feature set (source, consent, completeness) well with almost no tuning; falls back to a transparent rule-based scorer if no model has been trained yet. | Apache-2.0 |
-| **rapidfuzz** | Deduplication | Fast fuzzy string matching in C, with blocking (see `app/deduplication/dedup.py`) so dedup stays roughly linear instead of comparing every pair at 100k+ rows. | MIT |
+| **rapidfuzz** | Field-mapping heuristic fallback | Fast fuzzy string matching in C, used when the LLM can't resolve a field mapping (`app/mapping/mapper.py`). No longer used for deduplication -- see Limitations for why fuzzy name matching was removed from dedup. | MIT |
 | **MLflow** | Scoring experiment tracking | Free, local tracking server; logs the XGBoost hyperparameters/MAE for every training run. | Apache-2.0 |
 | **Streamlit** | Dashboard | Fastest way to get a real, interactive dashboard out of pandas DataFrames with no separate frontend build. | Apache-2.0 |
 | **Faker** | Synthetic data generation | Realistic names/emails/phones for the 100k+ row demo dataset. | MIT |
@@ -112,7 +112,7 @@ leadpipe-doctor/
 │   ├── mapping/             schema profiling + LLM/RAG field mapping
 │   ├── cleaning/            pandas transforms (the code the agent patches)
 │   ├── validation/          Pydantic-based row validation
-│   ├── deduplication/       rapidfuzz-based dedup
+│   ├── deduplication/       exact email/phone match dedup
 │   ├── scoring/             XGBoost + rule-based lead scoring
 │   ├── agent/                LangGraph self-healing loop
 │   └── utils/                config + storage
@@ -234,7 +234,8 @@ Recording notes and the shot-by-shot script are in
    demo video.
 5. **Show deduplication**: the dashboard's "Duplicates removed" metric and
    the union-find clustering in `app/deduplication/dedup.py` show
-   cross-source duplicate detection on name/phone/email.
+   cross-source duplicate detection on exact email/phone match (see
+   Limitations for why this is exact-match only, not fuzzy name matching).
 6. **Show scoring**: `python -m ml.train` trains the XGBoost model on
    bootstrapped rule-based pseudo-labels (see Limitations); afterward,
    `/leads` and the dashboard's score histogram reflect the trained
@@ -266,13 +267,38 @@ Recording notes and the shot-by-shot script are in
   `app/cleaning/transforms.py` specifically. A bug in ingestion, mapping,
   validation, or scoring code is out of scope for this loop and would
   need the same pattern extended to those modules.
-- **Dedup blocking key is last-name prefix.** Fast at 100k+ rows, but a
-  lead whose name is wildly misspelled *and* has no shared email/phone
-  with its duplicate could be missed. A production version would add a
-  phonetic key (e.g. Soundex) as a second blocking pass.
+- **Dedup is exact email/phone match only, deliberately.** It used to
+  also merge on fuzzy name similarity, but a QA audit proved that's
+  unsound: `fuzz.ratio("jon li", "jan li")` and
+  `fuzz.ratio("mohammed ali", "muhammad ali")` both score 83.3, yet one
+  pair is almost certainly different people and the other is almost
+  certainly the same person -- no threshold or corroborating signal
+  (same email domain, same phone prefix) reliably tells them apart in
+  realistic bulk data, and getting it wrong silently destroys real lead
+  data (1,110 distinct people collapsed to 12 survivors in one test
+  batch before this was fixed). Exact matching can't produce false
+  positives, at the cost of missing "same person, different email and
+  phone, recognizable name" cases -- see `app/deduplication/dedup.py`
+  for the full writeup. Cross-batch dedup (checking new leads against
+  everything already in Postgres, not just the current request) was
+  added for the same reason: real sources deliver one lead per request,
+  so batch-only dedup rarely fired in practice.
+- **Disposable-email and placeholder-name detection are curated lists,
+  not exhaustive.** `app/scoring/features.py` has ~30 known disposable
+  domains and ~25 keyboard-mash/test tokens; both are a floor against
+  the cheapest, most common gaming attempts (a QA audit found a
+  mailinator.com spam submission outscoring a real Gmail signup before
+  this), not a complete solution. A production version would use a
+  maintained third-party disposable-domain list and real name-plausibility
+  modeling instead of a static blocklist.
 - **Patch safety is syntax + required-function-presence only.** The agent
   validates that the LLM's rewritten file parses and keeps every expected
   function name, but doesn't run a full test suite against it before
   applying it. A stricter version would run existing unit tests against
   the patch before accepting it, and roll back automatically if the
   retry still fails.
+- **No schema migration tool.** `app/utils/storage.py` has a best-effort
+  `_ensure_columns` helper that adds missing columns to already-existing
+  tables when the `Lead` schema grows a new field, since there's no
+  Alembic (or equivalent) here. Fine for a project at this stage; a real
+  production deployment would want proper migrations.

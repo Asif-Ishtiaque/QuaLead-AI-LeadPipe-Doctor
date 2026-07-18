@@ -24,9 +24,18 @@ from sklearn.model_selection import train_test_split
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.schema.canonical import Lead, LeadSource  # noqa: E402
-from app.scoring.features import FEATURE_NAMES, build_features, features_to_vector  # noqa: E402
+from app.scoring.features import (  # noqa: E402
+    DISPOSABLE_EMAIL_DOMAINS,
+    FEATURE_NAMES,
+    PLACEHOLDER_NAME_TOKENS,
+    build_features,
+    features_to_vector,
+)
 from app.scoring.rule_based import rule_based_score  # noqa: E402
 from app.utils.config import settings  # noqa: E402
+
+_DISPOSABLE_DOMAINS = list(DISPOSABLE_EMAIL_DOMAINS)
+_PLACEHOLDER_TOKENS = list(PLACEHOLDER_NAME_TOKENS)
 
 MODEL_OUT = Path(__file__).resolve().parent / "models" / "lead_scorer.joblib"
 N_SAMPLES = 20_000
@@ -35,13 +44,26 @@ N_SAMPLES = 20_000
 def _synthetic_lead(i: int) -> Lead:
     has_email = random.random() > 0.15
     has_phone = random.random() > 0.15
-    email = f"lead{i}@{'gmail.com' if random.random() > 0.5 else 'company.com'}" if has_email else "placeholder@example.com"
+
+    if not has_email:
+        email = "placeholder@example.com"
+    elif random.random() < 0.08:  # occasional disposable/spam signup
+        email = f"lead{i}@{random.choice(_DISPOSABLE_DOMAINS)}"
+    else:
+        email = f"lead{i}@{'gmail.com' if random.random() > 0.5 else 'company.com'}"
+
     phone = f"+1415555{i % 10000:04d}" if has_phone else "+15550000000"
+
+    if random.random() < 0.08:  # occasional keyboard-mash/placeholder name
+        first_name = random.choice(_PLACEHOLDER_TOKENS)
+    else:
+        first_name = "Sample"
+    last_name = "Lead" if random.random() > 0.1 else "X"
 
     return Lead(
         lead_id=f"train-{i}",
-        first_name="Sample",
-        last_name="Lead" if random.random() > 0.1 else "X",
+        first_name=first_name,
+        last_name=last_name,
         email=email,
         phone_e164=phone,
         source=random.choice(list(LeadSource)),

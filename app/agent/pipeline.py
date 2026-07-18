@@ -16,6 +16,7 @@ from app.ingestion import ingest
 from app.mapping.mapper import apply_mapping, map_source_fields
 from app.schema.canonical import Lead, LeadSource
 from app.scoring.scorer import LeadScorer
+from app.utils.storage import find_existing_leads
 from app.validation.validator import validate_records
 
 _scorer = LeadScorer()
@@ -57,6 +58,7 @@ def run_pipeline(source: LeadSource, raw_data: Any) -> PipelineResult:
     # one record won over the other instead of just trusting a black box.
     scored_valid = _scorer.score_batch(validation.valid)
     kept, duplicates = deduplicate(scored_valid)
+    kept, duplicates = _dedup_against_existing(kept, duplicates)
 
     return PipelineResult(
         source=source.value,
@@ -65,3 +67,38 @@ def run_pipeline(source: LeadSource, raw_data: Any) -> PipelineResult:
         invalid=validation.invalid,
         field_mapping=field_mapping,
     )
+
+
+def _dedup_against_existing(kept: list[Lead], duplicates: list[Lead]) -> tuple[list[Lead], list[Lead]]:
+    """In-batch dedup (deduplicate() above) only catches duplicates within
+    the current request. Real lead sources -- Facebook webhooks especially
+    -- deliver one lead per request, not big batches, so that alone almost
+    never fires in production. This checks the survivors of in-batch dedup
+    against every already-stored lead's email/phone too, so a lead
+    resubmitted in a *separate* API call still gets caught.
+
+    Policy: first write wins. If a new lead's email or phone already
+    exists in `leads`, the new one is filed as a duplicate of that
+    existing record rather than trying to decide which is "better" and
+    rewrite an already-persisted row."""
+    if not kept:
+        return kept, duplicates
+
+    existing = find_existing_leads(
+        emails=[lead.email for lead in kept],
+        phones=[lead.phone_e164 for lead in kept],
+    )
+    if not existing:
+        return kept, duplicates
+
+    still_new: list[Lead] = []
+    for lead in kept:
+        match = existing.get(f"email:{lead.email.lower()}") or existing.get(f"phone:{lead.phone_e164}")
+        if match:
+            lead.status = "duplicate"
+            lead.duplicate_of_lead_id = match
+            duplicates.append(lead)
+        else:
+            still_new.append(lead)
+
+    return still_new, duplicates

@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from app.agent import human_review
 from app.agent.graph import run_self_healing
 from app.schema.canonical import LeadSource
-from app.utils.storage import read_table, save_healing_events, save_invalid, save_leads
+from app.utils.storage import get_stats, read_table, save_healing_events, save_invalid, save_leads
 
 app = FastAPI(title="LeadPipe Doctor", description="Self-healing lead ingestion agent")
 
@@ -94,20 +94,9 @@ def list_healing_events(limit: int = 1000) -> list[dict[str, Any]]:
 
 @app.get("/stats")
 def stats() -> dict[str, Any]:
-    leads = read_table("leads")
-    duplicates = read_table("duplicate_leads")
-    invalid = read_table("invalid_leads")
-    healing = read_table("healing_events")
-
-    return {
-        "leads_by_source": leads["source"].value_counts().to_dict() if not leads.empty else {},
-        "total_clean": len(leads),
-        "total_invalid": len(invalid),
-        "total_duplicates": len(duplicates),
-        "avg_quality_score": round(leads["quality_score"].mean(), 2) if not leads.empty else None,
-        "self_healing_events": len(healing),
-        "human_review_pending": len(human_review.read_all()),
-    }
+    # SQL-aggregated (COUNT/AVG/GROUP BY) rather than loading entire
+    # tables into pandas -- see app/utils/storage.py:get_stats for why.
+    return {**get_stats(), "human_review_pending": len(human_review.read_all())}
 
 
 @app.get("/human-review")

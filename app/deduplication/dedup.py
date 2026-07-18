@@ -1,25 +1,41 @@
-"""Fuzzy deduplication across name, phone, and email.
+"""Deduplication by exact email or exact phone match only.
 
-Two leads are considered the same person if they share an exact non-null
-email, share an exact non-null phone (already E.164-normalized), or have a
-close fuzzy name match. Within each duplicate cluster we keep the "best"
-record -- the one with the fewest missing fields, breaking ties by most
-recent created_at.
+This used to also merge leads on fuzzy name similarity, but a QA audit
+proved that's unsound: percentage-based fuzzy ratios cannot reliably tell
+"same person, typo'd name" apart from "different people, coincidentally
+similar name" --
 
-A naive all-pairs comparison is O(n^2), which doesn't hold up at the
-100k+ lead volumes this pipeline is meant to run at. Instead we use a
-union-find over exact keys (email, phone) plus a last-name-prefix bucket for
-the fuzzy name pass, so fuzzy comparison only ever happens within small
-same-prefix groups instead of across the whole dataset.
+    fuzz.ratio("jon li", "jan li")            == 83.3
+    fuzz.ratio("mohammed ali", "muhammad ali") == 83.3
+
+Same score, opposite ground truth -- no threshold separates them. Adding
+a "corroborating signal" (same email domain, same phone prefix) doesn't
+fix it either: realistic bulk data routinely has many different people
+sharing a company email domain or a regional area code, so those signals
+are satisfied constantly and don't actually distinguish same-person from
+different-person. Concretely, this let 1,110 distinct people (unique
+emails, unique phones) collapse down to 12 survivors in one test batch,
+purely because their names looked similar to each other.
+
+The cost of getting this wrong is asymmetric: a missed duplicate just
+shows up as two separate lead rows (mildly annoying, fully recoverable).
+A false-positive merge silently deletes a real customer's lead data
+(unrecoverable, and invisible unless someone goes looking for it). Given
+that asymmetry, only merging on exact identifiers -- which can't produce
+false positives -- is the correct tradeoff, even though it means this
+dedup pass no longer catches "same person, different email and phone,
+recognizable name" cases. If that case needs to be caught later, it needs
+a much stronger signal than name text alone (e.g. matching on a resolved
+company + verified phone carrier lookup), not a bigger fuzzy-match
+threshold.
+
+A naive all-pairs comparison is O(n^2); union-find over exact keys keeps
+this roughly linear even at 100k+ leads.
 """
 
 from collections import defaultdict
 
-from rapidfuzz import fuzz
-
 from app.schema.canonical import Lead
-
-NAME_MATCH_THRESHOLD = 90
 
 
 class _UnionFind:
@@ -36,10 +52,6 @@ class _UnionFind:
         ra, rb = self.find(a), self.find(b)
         if ra != rb:
             self.parent[ra] = rb
-
-
-def _full_name(lead: Lead) -> str:
-    return f"{lead.first_name} {lead.last_name}".strip().lower()
 
 
 def _completeness(lead: Lead) -> int:
@@ -62,7 +74,6 @@ def deduplicate(leads: list[Lead]) -> tuple[list[Lead], list[Lead]]:
 
     by_email: dict[str, int] = {}
     by_phone: dict[str, int] = {}
-    by_name_prefix: dict[str, list[int]] = defaultdict(list)
 
     for i, lead in enumerate(leads):
         if lead.email:
@@ -77,15 +88,6 @@ def deduplicate(leads: list[Lead]) -> tuple[list[Lead], list[Lead]]:
                 uf.union(i, by_phone[lead.phone_e164])
             else:
                 by_phone[lead.phone_e164] = i
-
-        prefix = (lead.last_name or "")[:3].lower()
-        by_name_prefix[prefix].append(i)
-
-    for bucket in by_name_prefix.values():
-        for pos, i in enumerate(bucket):
-            for j in bucket[pos + 1 :]:
-                if fuzz.ratio(_full_name(leads[i]), _full_name(leads[j])) >= NAME_MATCH_THRESHOLD:
-                    uf.union(i, j)
 
     clusters: dict[int, list[int]] = defaultdict(list)
     for i in range(n):
@@ -104,6 +106,7 @@ def deduplicate(leads: list[Lead]) -> tuple[list[Lead], list[Lead]]:
         for member in cluster:
             if member is not best:
                 member.status = "duplicate"
+                member.duplicate_of_lead_id = best.lead_id
                 duplicates.append(member)
 
     return kept, duplicates

@@ -3,12 +3,21 @@ before cleaning, validation, dedup, and scoring operate on it."""
 
 from __future__ import annotations
 
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
+
+
+def _has_letter(value: str) -> bool:
+    """True if the string contains at least one character from any
+    Unicode letter script (Latin, Han, Arabic, Cyrillic, ...). Used to
+    reject names that are pure emoji/symbols/punctuation without
+    penalizing legitimate non-English names."""
+    return any(unicodedata.category(ch).startswith("L") for ch in value)
 
 
 class LeadSource(str, Enum):
@@ -37,6 +46,10 @@ class Lead(BaseModel):
     created_at: datetime
     quality_score: Optional[float] = Field(default=None, ge=0, le=100)
     status: LeadStatus = LeadStatus.VALID
+    # Populated when status == "duplicate": which kept lead this one was
+    # merged into, so a merge can be traced/audited later instead of the
+    # discarded record just vanishing into an anonymous pile.
+    duplicate_of_lead_id: Optional[str] = None
     raw_payload: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("created_at")
@@ -45,6 +58,13 @@ class Lead(BaseModel):
         if v.tzinfo is None:
             return v.replace(tzinfo=timezone.utc)
         return v.astimezone(timezone.utc)
+
+    @field_validator("first_name", "last_name")
+    @classmethod
+    def reject_non_alphabetic_junk(cls, v: str) -> str:
+        if not _has_letter(v):
+            raise ValueError("name must contain at least one letter -- got no alphabetic characters (e.g. emoji/symbols only)")
+        return v
 
     class Config:
         use_enum_values = True

@@ -14,11 +14,42 @@ FEATURE_NAMES = [
     "has_campaign_id",
     "consent",
     "email_is_free_provider",
+    "email_is_disposable",
+    "name_is_placeholder_like",
     "created_hour",
     *[f"source_{s}" for s in SOURCE_ORDER],
 ]
 
 FREE_EMAIL_DOMAINS = {"gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com"}
+
+# Not exhaustive -- disposable-email services launch constantly -- but
+# catches the common ones a QA audit found gaming the old scorer (a
+# mailinator.com spam submission outscored a real gmail user because
+# "not in the 5-domain freemail list" was being read as "looks
+# professional"). A real deployment should use a maintained third-party
+# list; this is deliberately a floor, not a complete solution.
+DISPOSABLE_EMAIL_DOMAINS = {
+    "mailinator.com", "guerrillamail.com", "guerrillamail.info", "10minutemail.com",
+    "tempmail.com", "temp-mail.org", "throwawaymail.com", "yopmail.com",
+    "trashmail.com", "getnada.com", "dispostable.com", "fakeinbox.com",
+    "sharklasers.com", "maildrop.cc", "mailnesia.com", "mintemail.com",
+    "spamgourmet.com", "mytrashmail.com", "tempinbox.com", "discard.email",
+    "emailondeck.com", "mohmal.com", "moakt.com", "burnermail.io",
+    "grr.la", "spam4.me", "0-mail.com", "mailcatch.com",
+}
+
+# Obvious test/keyboard-mash/placeholder values -- doesn't catch every
+# fake name (that's an open problem), but catches the cheap, common
+# cases without penalizing legitimate short names.
+PLACEHOLDER_NAME_TOKENS = {
+    "test", "testing", "asdf", "asdfg", "asdfgh", "qwerty", "xxx", "yyy",
+    "zzz", "aaa", "foo", "bar", "baz", "none", "na", "n/a", "unknown",
+    "sample", "example", "fake", "spam", "abc", "lorem", "ipsum", "asd",
+}
+
+
+def _is_placeholder_name(value: str) -> bool:
+    return value.strip().lower() in PLACEHOLDER_NAME_TOKENS
 
 
 def build_features(lead: Lead) -> dict[str, float]:
@@ -33,6 +64,8 @@ def build_features(lead: Lead) -> dict[str, float]:
         "has_campaign_id": float(bool(lead.campaign_id)),
         "consent": float(bool(lead.consent)),
         "email_is_free_provider": float(email_domain in FREE_EMAIL_DOMAINS),
+        "email_is_disposable": float(email_domain in DISPOSABLE_EMAIL_DOMAINS),
+        "name_is_placeholder_like": float(_is_placeholder_name(lead.first_name) or _is_placeholder_name(lead.last_name)),
         "created_hour": float(lead.created_at.hour),
     }
     for s in SOURCE_ORDER:

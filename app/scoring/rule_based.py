@@ -13,6 +13,13 @@ WEIGHTS = {
     "has_campaign_id": 10,
     "consent": 30,
     "email_is_free_provider": -5,
+    # Strong enough that a disposable-email spam submission can no longer
+    # outscore a real person's plain Gmail signup -- a QA audit found
+    # exactly that happening (mailinator.com scored 50.6, a genuine
+    # gmail.com lead scored 45.49) because "not in the 5-domain freemail
+    # list" was being read as "looks professional."
+    "email_is_disposable": -50,
+    "name_is_placeholder_like": -20,
 }
 
 
