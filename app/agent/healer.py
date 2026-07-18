@@ -90,8 +90,10 @@ Respond with ONLY the complete corrected Python file content, no
 explanation, no markdown code fences."""
 
     # a full-file rewrite is a long generation on CPU-only inference,
-    # especially for smaller/quantized models -- give it real headroom
-    response = generate(prompt, timeout=240.0)
+    # especially for smaller/quantized models -- observed timings on an
+    # 8GB machine ranged from ~106s to ~155s, with real variance run to
+    # run, so give it generous headroom rather than tuning to one sample
+    response = generate(prompt, timeout=360.0)
     return _strip_code_fences(response)
 
 
