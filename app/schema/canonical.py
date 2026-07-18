@@ -1,0 +1,67 @@
+"""Canonical lead schema. Every source format gets mapped into this shape
+before cleaning, validation, dedup, and scoring operate on it."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Any, Optional
+
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+
+class LeadSource(str, Enum):
+    FACEBOOK = "facebook"
+    INSTAGRAM = "instagram"
+    GOOGLE_FORM = "google_form"
+    LANDING_PAGE = "landing_page"
+
+
+class LeadStatus(str, Enum):
+    VALID = "valid"
+    INVALID = "invalid"
+    DUPLICATE = "duplicate"
+    HUMAN_REVIEW = "human_review"
+
+
+class Lead(BaseModel):
+    lead_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    email: EmailStr
+    phone_e164: str = Field(pattern=r"^\+[1-9]\d{6,14}$")
+    source: LeadSource
+    campaign_id: Optional[str] = None
+    consent: bool
+    created_at: datetime
+    quality_score: Optional[float] = Field(default=None, ge=0, le=100)
+    status: LeadStatus = LeadStatus.VALID
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("created_at")
+    @classmethod
+    def ensure_utc(cls, v: datetime) -> datetime:
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v.astimezone(timezone.utc)
+
+    class Config:
+        use_enum_values = True
+
+
+# Field descriptions used both as documentation and as the RAG corpus the
+# mapping module embeds into ChromaDB so the LLM can ground its field
+# mapping guesses in what each canonical field actually means.
+CANONICAL_FIELD_DESCRIPTIONS: dict[str, str] = {
+    "first_name": "The lead's given/first name. Source fields like 'fname', 'First Name', or the first token of a combined 'Full Name' map here.",
+    "last_name": "The lead's family/last name. Source fields like 'lname', 'Last Name', or remaining tokens of a combined 'Full Name' map here.",
+    "email": "The lead's email address. Source fields like 'email', 'Email Address', 'contact_email' map here.",
+    "phone_e164": "The lead's phone number, to be normalized to E.164 format. Source fields like 'phone', 'Phone Number', 'mobile', 'whatsapp' map here.",
+    "source": "Which channel the lead came from: facebook, instagram, google_form, or landing_page. Usually known from the ingestion context, not a source field.",
+    "campaign_id": "An ad or form campaign identifier. Source fields like 'campaign_id', 'ad_id', 'utm_campaign', 'form_id' map here.",
+    "consent": "Whether the lead consented to marketing contact. Source fields like 'consent', 'opt_in', 'marketing_consent', 'gdpr_consent' map here.",
+    "created_at": "Timestamp the lead was captured. Source fields like 'created_time', 'timestamp', 'Submitted At', 'date' map here.",
+}
+
+CANONICAL_FIELDS = list(CANONICAL_FIELD_DESCRIPTIONS.keys())

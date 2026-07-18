@@ -1,0 +1,115 @@
+"""FastAPI entrypoint for LeadPipe Doctor.
+
+Each /ingest/* route accepts one source's raw input, runs it through the
+self-healing agent graph (ingest -> map -> clean -> validate -> dedup ->
+score, with automatic LLM-driven recovery if the cleaning engine throws),
+persists the results, and returns a summary."""
+
+from __future__ import annotations
+
+from typing import Any, Union
+
+from fastapi import FastAPI, UploadFile
+from fastapi.responses import JSONResponse
+
+from app.agent import human_review
+from app.agent.graph import run_self_healing
+from app.schema.canonical import LeadSource
+from app.utils.storage import read_table, save_healing_events, save_invalid, save_leads
+
+app = FastAPI(title="LeadPipe Doctor", description="Self-healing lead ingestion agent")
+
+
+def _persist_and_summarize(source: LeadSource, final_state: dict) -> dict[str, Any]:
+    result = final_state.get("result")
+    if result is not None:
+        save_leads(result.scored_leads, table="leads")
+        save_leads(result.duplicates, table="duplicate_leads")
+        save_invalid(result.invalid, source=source.value)
+
+    save_healing_events(source.value, final_state["healing_events"])
+
+    return {
+        "status": final_state["status"],
+        "retries": final_state["retries"],
+        "healing_events": final_state["healing_events"],
+        "summary": result.summary if result else None,
+    }
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.post("/ingest/facebook")
+def ingest_facebook(payload: dict[str, Any]) -> JSONResponse:
+    final_state = run_self_healing(LeadSource.FACEBOOK, payload)
+    return JSONResponse(_persist_and_summarize(LeadSource.FACEBOOK, final_state))
+
+
+@app.post("/ingest/landing-page")
+def ingest_landing_page(payload: Union[dict[str, Any], list[dict[str, Any]]]) -> JSONResponse:
+    final_state = run_self_healing(LeadSource.LANDING_PAGE, payload)
+    return JSONResponse(_persist_and_summarize(LeadSource.LANDING_PAGE, final_state))
+
+
+@app.post("/ingest/instagram")
+async def ingest_instagram(file: UploadFile) -> JSONResponse:
+    csv_text = (await file.read()).decode()
+    final_state = run_self_healing(LeadSource.INSTAGRAM, csv_text)
+    return JSONResponse(_persist_and_summarize(LeadSource.INSTAGRAM, final_state))
+
+
+@app.post("/ingest/google-form")
+async def ingest_google_form(file: UploadFile) -> JSONResponse:
+    csv_text = (await file.read()).decode()
+    final_state = run_self_healing(LeadSource.GOOGLE_FORM, csv_text)
+    return JSONResponse(_persist_and_summarize(LeadSource.GOOGLE_FORM, final_state))
+
+
+@app.get("/leads")
+def list_leads(limit: int = 100) -> list[dict[str, Any]]:
+    df = read_table("leads")
+    return df.tail(limit).to_dict(orient="records")
+
+
+@app.get("/duplicates")
+def list_duplicates(limit: int = 1000) -> list[dict[str, Any]]:
+    df = read_table("duplicate_leads")
+    return df.tail(limit).to_dict(orient="records")
+
+
+@app.get("/invalid")
+def list_invalid(limit: int = 1000) -> list[dict[str, Any]]:
+    df = read_table("invalid_leads")
+    return df.tail(limit).to_dict(orient="records")
+
+
+@app.get("/healing-events")
+def list_healing_events(limit: int = 1000) -> list[dict[str, Any]]:
+    df = read_table("healing_events")
+    return df.tail(limit).to_dict(orient="records")
+
+
+@app.get("/stats")
+def stats() -> dict[str, Any]:
+    leads = read_table("leads")
+    duplicates = read_table("duplicate_leads")
+    invalid = read_table("invalid_leads")
+    healing = read_table("healing_events")
+
+    return {
+        "leads_by_source": leads["source"].value_counts().to_dict() if not leads.empty else {},
+        "total_clean": len(leads),
+        "total_invalid": len(invalid),
+        "total_duplicates": len(duplicates),
+        "avg_quality_score": round(leads["quality_score"].mean(), 2) if not leads.empty else None,
+        "self_healing_events": len(healing),
+        "human_review_pending": len(human_review.read_all()),
+    }
+
+
+@app.get("/human-review")
+def list_human_review() -> list[dict[str, Any]]:
+    return human_review.read_all()

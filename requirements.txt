@@ -1,0 +1,53 @@
+# --- API / web ---
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+python-multipart==0.0.19
+
+# --- Data processing ---
+pandas==2.2.3
+numpy==1.26.4
+python-dateutil==2.9.0.post0
+phonenumbers==8.13.50
+email-validator==2.2.0
+
+# --- Validation ---
+pydantic==2.10.3
+pydantic-settings==2.7.0
+
+# --- Database ---
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+duckdb==1.1.3
+duckdb-engine==0.13.6
+
+# --- Vector DB / RAG ---
+chromadb==0.5.23
+
+# --- Agent framework ---
+langgraph==0.2.60
+langchain-core==0.3.25
+
+# --- LLM client (talks to local Ollama over HTTP, no paid API) ---
+ollama==0.4.4
+requests==2.32.3
+
+# --- Deduplication ---
+rapidfuzz==3.10.1
+
+# --- ML / scoring ---
+xgboost==2.1.3
+scikit-learn==1.5.2
+joblib==1.4.2
+
+# --- MLOps ---
+mlflow==2.18.0
+
+# --- Dashboard ---
+streamlit==1.40.2
+plotly==5.24.1
+
+# --- Synthetic data generation ---
+faker==33.1.0
+
+# --- Testing ---
+pytest==8.3.4

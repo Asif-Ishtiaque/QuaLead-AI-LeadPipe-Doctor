@@ -1,0 +1,111 @@
+version: "3.9"
+
+services:
+  # ---- Local LLM runtime (free, open-source, no external API) ----
+  ollama:
+    image: ollama/ollama:latest
+    container_name: leadpipe-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # one-shot init container that pulls the models the agent needs, then exits
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: leadpipe-ollama-init
+    depends_on:
+      - ollama
+    entrypoint: >
+      sh -c "
+        until curl -sf http://ollama:11434/api/tags; do sleep 2; done;
+        OLLAMA_HOST=http://ollama:11434 ollama pull qwen2.5:7b;
+        OLLAMA_HOST=http://ollama:11434 ollama pull nomic-embed-text;
+      "
+
+  # ---- Vector store for RAG field-mapping memory ----
+  chromadb:
+    image: chromadb/chroma:0.5.23
+    container_name: leadpipe-chromadb
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+
+  # ---- Relational store for clean leads / human review queue ----
+  db:
+    image: postgres:16-alpine
+    container_name: leadpipe-db
+    environment:
+      POSTGRES_USER: leadpipe
+      POSTGRES_PASSWORD: leadpipe
+      POSTGRES_DB: leadpipe
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leadpipe"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---- Experiment tracking for the scoring model ----
+  mlflow:
+    build: .
+    container_name: leadpipe-mlflow
+    command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri /srv/ml/mlruns --default-artifact-root /srv/ml/mlruns
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./ml/mlruns:/srv/ml/mlruns
+
+  # ---- FastAPI backend: ingestion, self-healing agent, scoring ----
+  api:
+    build: .
+    container_name: leadpipe-api
+    environment:
+      DATABASE_URL: postgresql://leadpipe:leadpipe@db:5432/leadpipe
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: qwen2.5:7b
+      EMBEDDING_MODEL: nomic-embed-text
+      CHROMA_HOST: chromadb
+      CHROMA_PORT: 8000
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/srv/data
+      - ./ml:/srv/ml
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+
+  # ---- Streamlit dashboard ----
+  dashboard:
+    build: .
+    container_name: leadpipe-dashboard
+    command: streamlit run dashboard/streamlit_app.py --server.address 0.0.0.0 --server.port 8501
+    environment:
+      API_BASE_URL: http://api:8000
+      DATABASE_URL: postgresql://leadpipe:leadpipe@db:5432/leadpipe
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/srv/data
+    depends_on:
+      - api
+
+volumes:
+  pg_data:
+  chroma_data:
+  ollama_models:
