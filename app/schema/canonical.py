@@ -12,12 +12,18 @@ from typing import Any, Optional
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
-def _has_letter(value: str) -> bool:
-    """True if the string contains at least one character from any
-    Unicode letter script (Latin, Han, Arabic, Cyrillic, ...). Used to
-    reject names that are pure emoji/symbols/punctuation without
-    penalizing legitimate non-English names."""
-    return any(unicodedata.category(ch).startswith("L") for ch in value)
+def _is_mostly_letters(value: str) -> bool:
+    """True if at least half the non-space characters are Unicode letters
+    (any script -- Latin, Han, Arabic, Cyrillic, ...). Rejects
+    emoji/symbol junk, including one real letter padded with emoji to
+    dodge a simpler "contains at least one letter" check (e.g. "\U0001F602A"),
+    while still accepting legitimate names with apostrophes/hyphens
+    ("O'Brien", "Anne-Marie") and non-English scripts."""
+    chars = [ch for ch in value if not ch.isspace()]
+    if not chars:
+        return False
+    letters = sum(1 for ch in chars if unicodedata.category(ch).startswith("L"))
+    return letters / len(chars) > 0.5
 
 
 class LeadSource(str, Enum):
@@ -62,8 +68,8 @@ class Lead(BaseModel):
     @field_validator("first_name", "last_name")
     @classmethod
     def reject_non_alphabetic_junk(cls, v: str) -> str:
-        if not _has_letter(v):
-            raise ValueError("name must contain at least one letter -- got no alphabetic characters (e.g. emoji/symbols only)")
+        if not _is_mostly_letters(v):
+            raise ValueError("name must be mostly letters -- got mostly non-alphabetic characters (e.g. emoji/symbols)")
         return v
 
     class Config:

@@ -107,6 +107,9 @@ def read_table(table: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+_CROSS_BATCH_CHUNK_SIZE = 1000
+
+
 def find_existing_leads(emails: list[str], phones: list[str]) -> dict[str, str]:
     """Cross-batch dedup: which of these emails/phones already exist in the
     `leads` table from a *previous* ingest, not just this batch? Returns
@@ -115,31 +118,41 @@ def find_existing_leads(emails: list[str], phones: list[str]) -> dict[str, str]:
     Without this, the same lead submitted in two separate API calls (the
     normal way webhooks actually arrive -- one lead at a time, not in
     bulk) was never checked against anything already stored, so repeat
-    submissions all came through as separate "valid" rows."""
+    submissions all came through as separate "valid" rows.
+
+    Values are deduplicated and chunked into batches of
+    _CROSS_BATCH_CHUNK_SIZE before building each IN (...) query -- a
+    single query with tens of thousands of placeholders was measured
+    taking 3.3s for a 25k-lead batch (50k placeholders across the two
+    queries) and only gets worse as batches grow; chunking keeps each
+    individual query small and fast regardless of batch size."""
     engine = get_engine()
     if not inspect(engine).has_table("leads"):
         return {}
 
-    emails = [e.lower() for e in emails if e]
-    phones = [p for p in phones if p]
+    emails = sorted({e.lower() for e in emails if e})
+    phones = sorted({p for p in phones if p})
     if not emails and not phones:
         return {}
 
+    def chunks(values: list[str]) -> list[list[str]]:
+        return [values[i : i + _CROSS_BATCH_CHUNK_SIZE] for i in range(0, len(values), _CROSS_BATCH_CHUNK_SIZE)]
+
     matches: dict[str, str] = {}
     with engine.connect() as conn:
-        if emails:
-            placeholders = ", ".join(f":e{i}" for i in range(len(emails)))
+        for chunk in chunks(emails):
+            placeholders = ", ".join(f":e{i}" for i in range(len(chunk)))
             rows = conn.execute(
                 text(f"SELECT lead_id, email FROM leads WHERE lower(email) IN ({placeholders})"),
-                {f"e{i}": e for i, e in enumerate(emails)},
+                {f"e{i}": e for i, e in enumerate(chunk)},
             )
             for lead_id, email in rows:
                 matches[f"email:{email.lower()}"] = lead_id
-        if phones:
-            placeholders = ", ".join(f":p{i}" for i in range(len(phones)))
+        for chunk in chunks(phones):
+            placeholders = ", ".join(f":p{i}" for i in range(len(chunk)))
             rows = conn.execute(
                 text(f"SELECT lead_id, phone_e164 FROM leads WHERE phone_e164 IN ({placeholders})"),
-                {f"p{i}": p for i, p in enumerate(phones)},
+                {f"p{i}": p for i, p in enumerate(chunk)},
             )
             for lead_id, phone in rows:
                 matches[f"phone:{phone}"] = lead_id
