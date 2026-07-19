@@ -1,4 +1,4 @@
-# LeadPipe Doctor -- Self-Healing Lead Ingestion Agent
+# QuaLead AI: LeadPipe Doctor -- Self-Healing Lead Ingestion Agent
 
 Messy leads go in (Facebook webhook JSON, Instagram CSV, Google Form CSV,
 landing-page JSON) and clean, validated, deduplicated, scored leads come
