@@ -108,11 +108,15 @@ already do that for bad input).
 Respond with ONLY the complete corrected Python file content, no
 explanation, no markdown code fences."""
 
-    # a full-file rewrite is a long generation on CPU-only inference,
-    # especially for smaller/quantized models -- observed timings on an
-    # 8GB machine ranged from ~106s to ~155s, with real variance run to
-    # run, so give it generous headroom rather than tuning to one sample
-    response = generate(prompt, timeout=360.0)
+    # A full-file rewrite's output length scales with the current size of
+    # transforms.py, which only grows over time as more cleaning rules get
+    # added -- a QA pass on the file at ~120 lines (~1200+ tokens) measured
+    # ~3.25 tokens/sec on an 8GB CPU-only Mac, i.e. ~370s just to reproduce
+    # the file once, before the model's own edits/overhead. 360s (tuned
+    # against an earlier, smaller version of this file) is no longer
+    # reliable headroom; 600s leaves real margin and still fails fast
+    # enough to not stall a request indefinitely.
+    response = generate(prompt, timeout=600.0)
     return _strip_code_fences(response)
 
 
