@@ -19,13 +19,17 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from typing import Callable, TypeVar
 
 import chromadb
+from chromadb.errors import InvalidDimensionException
 from chromadb.utils import embedding_functions
 
 from app.mapping.llm_client import OllamaUnavailable, embed
 from app.schema.canonical import CANONICAL_FIELD_DESCRIPTIONS
 from app.utils.config import settings
+
+T = TypeVar("T")
 
 
 class OllamaEmbeddingFunction(embedding_functions.EmbeddingFunction):
@@ -75,30 +79,61 @@ def get_field_mappings_collection():
     )
 
 
+def _with_dimension_recovery(collection_name: str, operation: Callable[[], T]) -> T:
+    """A Chroma collection is permanently bound to whichever embedding
+    dimension it saw on its first write -- if Ollama was even momentarily
+    unreachable the first time this collection was touched,
+    OllamaEmbeddingFunction transparently fell back to Chroma's bundled
+    384-dim ONNX model instead of nomic-embed-text's 768-dim, and the
+    collection is stuck at 384 from then on. Ollama coming back online
+    doesn't fix this -- every real embedding call afterwards raises
+    InvalidDimensionException forever, which (confirmed live) silently
+    degrades every mapping decision to the heuristic fallback instead of
+    the LLM+RAG path, with no visible error.
+
+    Rebuilding the collection from scratch and retrying once is cheap
+    (`canonical_schema` reseeds itself; `field_mappings` just loses its
+    cached decisions, which get re-learned on the next resolution) and
+    turns a permanent, silent quality regression into a one-time retry --
+    the same self-healing instinct this whole project is built around,
+    just applied to the RAG layer instead of the cleaning layer."""
+    try:
+        return operation()
+    except InvalidDimensionException:
+        get_client().delete_collection(collection_name)
+        return operation()
+
+
 def lookup_known_mapping(source: str, field_name: str) -> str | None:
     """Exact-match lookup: has this (source, field_name) pair already been
     mapped before? Returns the canonical field name, or None."""
-    collection = get_field_mappings_collection()
-    result = collection.get(ids=[f"{source}:{field_name}"])
+    result = _with_dimension_recovery(
+        "field_mappings",
+        lambda: get_field_mappings_collection().get(ids=[f"{source}:{field_name}"]),
+    )
     if result["ids"]:
         return result["metadatas"][0]["canonical_field"]
     return None
 
 
 def remember_mapping(source: str, field_name: str, canonical_field: str, sample_value: str) -> None:
-    collection = get_field_mappings_collection()
-    collection.upsert(
-        ids=[f"{source}:{field_name}"],
-        documents=[f"{field_name}: {sample_value}"],
-        metadatas=[{"source": source, "field_name": field_name, "canonical_field": canonical_field}],
+    _with_dimension_recovery(
+        "field_mappings",
+        lambda: get_field_mappings_collection().upsert(
+            ids=[f"{source}:{field_name}"],
+            documents=[f"{field_name}: {sample_value}"],
+            metadatas=[{"source": source, "field_name": field_name, "canonical_field": canonical_field}],
+        ),
     )
 
 
 def query_similar_canonical_fields(field_name: str, sample_value: str, top_k: int = 3) -> list[dict]:
-    collection = get_canonical_schema_collection()
-    result = collection.query(
-        query_texts=[f"{field_name}: {sample_value}"],
-        n_results=top_k,
+    result = _with_dimension_recovery(
+        "canonical_schema",
+        lambda: get_canonical_schema_collection().query(
+            query_texts=[f"{field_name}: {sample_value}"],
+            n_results=top_k,
+        ),
     )
     return [
         {"field": meta["field"], "description": doc}

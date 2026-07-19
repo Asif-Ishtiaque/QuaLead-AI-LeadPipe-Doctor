@@ -17,12 +17,27 @@ from __future__ import annotations
 
 from typing import Any
 
+from chromadb.errors import ChromaError
 from rapidfuzz import fuzz, process
 
 from app.mapping import rag_store
 from app.mapping.llm_client import OllamaUnavailable, extract_json, generate
 from app.mapping.profiler import profile_fields
 from app.schema.canonical import CANONICAL_FIELD_DESCRIPTIONS
+
+# The embedding function behind every ChromaDB collection here transparently
+# swaps from Ollama's nomic-embed-text (768-dim) to Chroma's bundled ONNX
+# fallback (384-dim) if Ollama is even momentarily unreachable for a single
+# call -- see rag_store.OllamaEmbeddingFunction. A collection is permanently
+# bound to whichever dimension it saw first, so one transient Ollama blip
+# mid-batch raises InvalidDimensionException on the next Chroma call, which
+# otherwise propagates uncaught and takes the *entire* batch down to human
+# review (confirmed live: a brief Ollama hiccup during ingestion poisoned
+# mapping for facebook/instagram/google_form batches that had nothing to do
+# with Ollama being "down" by the time the exception surfaced). Treat it the
+# same as OllamaUnavailable everywhere RAG is touched -- degrade to the
+# heuristic/no-known-mapping path for that one field, not a batch failure.
+_RAG_UNAVAILABLE = (OllamaUnavailable, ChromaError)
 
 # "full_name" is a virtual target -- not a real canonical field, but a
 # recognized intermediate that the cleaning engine knows how to split into
@@ -113,7 +128,18 @@ Sample values: {samples[:3]}
 Respond with ONLY a JSON object like {{"canonical_field": "first_name"}} or
 {{"canonical_field": "unknown"}}. No other text."""
 
-    response = generate(prompt)
+    # generate()'s 30s default is tuned for an already-warm model -- if
+    # Ollama's idle timeout has unloaded qwen2.5:3b since the last call
+    # (observed live: happens between ingest batches during normal demo
+    # pacing, not just after a long idle gap), a cold reload alone takes
+    # anywhere from ~15s to 80+s depending on concurrent system load (a
+    # 90s budget succeeded live but only barely, at 89.0s), and a client
+    # that gives up mid-load doesn't just time out, it *cancels* the load
+    # server-side -- so every retry restarts the cold load from zero and
+    # can loop forever near a tight timeout. This call is per unique
+    # field name (cached after the first resolution via remember_
+    # mapping), so a generous timeout costs little overall.
+    response = generate(prompt, timeout=180.0)
     parsed = extract_json(response)
     field = parsed.get("canonical_field")
     if field in ("unknown", None, ""):
@@ -127,29 +153,35 @@ def map_source_fields(source: str, records: list[dict]) -> dict[str, str | None]
     mapping: dict[str, str | None] = {}
 
     for field_name, samples in profiles.items():
-        known = rag_store.lookup_known_mapping(source, field_name)
+        try:
+            known = rag_store.lookup_known_mapping(source, field_name)
+        except _RAG_UNAVAILABLE:
+            known = None
         if known is not None:
             mapping[field_name] = known
             continue
 
         try:
             resolved = _llm_match(field_name, samples)
-        except OllamaUnavailable:
+        except _RAG_UNAVAILABLE:
             resolved = None
 
         if resolved is None:
-            # Either Ollama is down, or it's up but answered "unknown" --
-            # qwen2.5:3b is small enough that it sometimes says "unknown"
-            # for a field even when the right canonical field was sitting
-            # right in its own retrieved context (observed live with "ts"
-            # and "Date" both failing to map to created_at). Don't let a
-            # single small-model miss be the final word when a confident
-            # heuristic match exists.
+            # Either Ollama/Chroma is down, or it's up but answered
+            # "unknown" -- qwen2.5:3b is small enough that it sometimes
+            # says "unknown" for a field even when the right canonical
+            # field was sitting right in its own retrieved context
+            # (observed live with "ts" and "Date" both failing to map to
+            # created_at). Don't let a single small-model miss be the
+            # final word when a confident heuristic match exists.
             resolved = _heuristic_match(field_name)
 
         mapping[field_name] = resolved
         if resolved:
-            rag_store.remember_mapping(source, field_name, resolved, samples[0] if samples else "")
+            try:
+                rag_store.remember_mapping(source, field_name, resolved, samples[0] if samples else "")
+            except _RAG_UNAVAILABLE:
+                pass
 
     return mapping
 
