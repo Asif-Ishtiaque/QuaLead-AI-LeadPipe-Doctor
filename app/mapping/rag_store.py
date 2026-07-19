@@ -41,7 +41,18 @@ class OllamaEmbeddingFunction(embedding_functions.EmbeddingFunction):
 
     def __call__(self, input: list[str]) -> list[list[float]]:
         try:
-            return [embed(text) for text in input]
+            # embed()'s 15s default is tuned for an already-warm model --
+            # if Ollama's idle timeout unloaded nomic-embed-text since the
+            # last call, a cold reload can exceed that (same class of bug
+            # fixed for the mapping LLM call in mapper.py, just a smaller
+            # model here). A spurious timeout here isn't just slow: it
+            # falls through to the ONNX fallback below, which -- if this
+            # is a fresh container/volume that's never cached it -- has
+            # to download a real model file over the network, and that
+            # download blocking the single API worker (confirmed live:
+            # stalled at ~30-50KB/s, would have taken 25+ minutes) is far
+            # worse than just waiting a bit longer for Ollama.
+            return [embed(text, timeout=60.0) for text in input]
         except OllamaUnavailable:
             return self._fallback(input)
 
