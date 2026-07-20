@@ -162,9 +162,13 @@ def hero_card(col, label, value, sub="", accent=PRIMARY, bar_pct=None):
 
 
 def stat_card(col, label, value, sub="", accent=PRIMARY):
+    # Ints get a thousands separator; anything already formatted (a string
+    # like "76%") passes through untouched -- "{:,}" on a str raises
+    # ValueError: Cannot specify ',' with 's'.
+    display = f"{value:,}" if isinstance(value, (int, float)) else str(value)
     col.markdown(
         f'<div class="qa-stat" style="--accent:{accent};"><div class="lbl">{label}</div>'
-        f'<div class="val">{value:,}</div><div class="sub">{sub}</div></div>',
+        f'<div class="val">{display}</div><div class="sub">{sub}</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -405,7 +409,7 @@ def page_lead_analytics():
     stat_card(k2, "High quality", len(hi), f"{round(100*len(hi)/len(scored),1) if len(scored) else 0}% of scored", accent=SUCCESS)
     stat_card(k3, "Low quality", len(lo), f"{round(100*len(lo)/len(scored),1) if len(scored) else 0}% -- deprioritize", accent=ERROR)
     consent_rate = round(100 * scored["consent"].fillna(False).astype(bool).mean(), 1) if "consent" in scored.columns else 0.0
-    stat_card(k4, "Consented", f"{consent_rate}", "% opted in to contact", accent=STATUS_COLORS["duplicate"])
+    stat_card(k4, "Consented", f"{consent_rate:.0f}%", "opted in to contact", accent=STATUS_COLORS["duplicate"])
     st.write("")
 
     left, right = st.columns(2)
