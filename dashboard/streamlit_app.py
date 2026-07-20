@@ -496,51 +496,55 @@ with tab_leads:
 
 with tab_upload:
     st.subheader("Upload leads")
-    st.caption("Drag a raw export in and QuaLead AI will clean, validate, score, and diagnose every row. Nothing is dropped -- messy leads are flagged, never deleted.")
+    st.caption(
+        "Drop **any** CSV -- from any CRM, ad platform, or spreadsheet, with "
+        "whatever column names it happens to use. QuaLead AI figures out which "
+        "columns are the name, email, phone, and so on, then cleans, validates, "
+        "scores, and diagnoses every row. Nothing is dropped -- messy leads are "
+        "flagged, never deleted."
+    )
 
-    up_col, cfg_col = st.columns([2, 1])
-    with cfg_col:
-        source = st.selectbox(
-            "Which feed is this?",
-            ["instagram", "google_form", "facebook", "landing_page"],
-            help="Picks the right parser. Instagram & Google Form expect CSV; Facebook & landing pages expect JSON / JSONL.",
-        )
-        is_csv_source = source in ("instagram", "google_form")
-        st.caption("CSV expected." if is_csv_source else "JSON or JSONL expected.")
-    with up_col:
-        uploaded = st.file_uploader(
-            "Drop a file here",
-            type=["csv", "json", "jsonl", "txt"],
-            help="Drag and drop, or browse. Max a few MB for a snappy demo.",
-        )
+    uploaded = st.file_uploader(
+        "Drag and drop a CSV here",
+        type=["csv"],
+        help="Any CSV export. Columns don't need to match a fixed schema -- the field mapper handles unknown headers.",
+    )
 
     if uploaded is not None:
         st.caption(f"Ready: **{uploaded.name}** ({uploaded.size / 1024:.0f} KB)")
         if st.button("Analyze leads", type="primary"):
-            endpoint = {
-                "instagram": "/ingest/instagram",
-                "google_form": "/ingest/google-form",
-                "facebook": "/ingest/facebook",
-                "landing_page": "/ingest/landing-page",
-            }[source]
             try:
-                with st.spinner("Cleaning, validating, scoring, and diagnosing your leads..."):
-                    raw = uploaded.getvalue()
-                    if source in ("instagram", "google_form"):
-                        resp = requests.post(f"{API_BASE_URL}{endpoint}", files={"file": (uploaded.name, raw)}, timeout=600)
-                    else:
-                        resp = requests.post(f"{API_BASE_URL}{endpoint}", data=raw,
-                                             headers={"Content-Type": "application/json"}, timeout=600)
+                with st.spinner("Mapping columns, cleaning, validating, scoring, and diagnosing your leads..."):
+                    resp = requests.post(
+                        f"{API_BASE_URL}/ingest/csv",
+                        files={"file": (uploaded.name, uploaded.getvalue())},
+                        timeout=600,
+                    )
                 resp.raise_for_status()
-                summary = resp.json().get("summary") or {}
+                body = resp.json()
+                summary = body.get("summary") or {}
+                mapping = summary.get("field_mapping") or {}
                 st.success("Analysis complete -- your leads are in.")
                 st.balloons()
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Scored & kept", f"{summary.get('scored', 0):,}")
                 m2.metric("Duplicates merged", f"{summary.get('duplicates', 0):,}")
                 m3.metric("Invalid rows", f"{summary.get('invalid', 0):,}")
+                if mapping:
+                    with st.expander("How your columns were mapped", expanded=True):
+                        mapped = {k: v for k, v in mapping.items() if v}
+                        if mapped:
+                            st.dataframe(
+                                pd.DataFrame(
+                                    [{"Your column": k, "Mapped to": v} for k, v in mapped.items()]
+                                ),
+                                use_container_width=True, hide_index=True,
+                            )
+                        unmapped = [k for k, v in mapping.items() if not v]
+                        if unmapped:
+                            st.caption("Kept in raw_payload, not mapped to a canonical field: " + ", ".join(unmapped))
                 st.caption("Refresh (top right) to see them flow into the dashboard.")
             except requests.RequestException as exc:
                 st.error(f"Upload failed: {exc}")
     else:
-        st.info("No file yet -- drop a CSV or JSON export above to get started.")
+        st.info("No file yet -- drop a CSV above to get started.")

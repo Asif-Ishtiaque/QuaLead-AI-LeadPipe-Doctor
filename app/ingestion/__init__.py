@@ -2,6 +2,7 @@ from typing import Any, Callable
 
 from app.schema.canonical import LeadSource
 
+from .csv_upload import parse_csv_upload
 from .facebook import parse_facebook_input
 from .google_form import parse_google_form_csv
 from .instagram import parse_instagram_csv
@@ -16,6 +17,7 @@ SOURCE_LOADERS: dict[LeadSource, Callable[[Any], list[dict[str, Any]]]] = {
     LeadSource.INSTAGRAM: parse_instagram_csv,
     LeadSource.GOOGLE_FORM: parse_google_form_csv,
     LeadSource.LANDING_PAGE: parse_landing_page_input,
+    LeadSource.CSV_UPLOAD: parse_csv_upload,
 }
 
 

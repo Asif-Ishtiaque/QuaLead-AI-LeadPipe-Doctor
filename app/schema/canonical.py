@@ -32,6 +32,10 @@ class LeadSource(str, Enum):
     INSTAGRAM = "instagram"
     GOOGLE_FORM = "google_form"
     LANDING_PAGE = "landing_page"
+    # Manual "upload any CSV" path (dashboard Upload tab / POST /ingest/csv)
+    # -- an arbitrary CSV with unknown column names that goes straight to
+    # the RAG/LLM field mapper, no source-specific parsing assumptions.
+    CSV_UPLOAD = "csv_upload"
 
 
 class LeadStatus(str, Enum):

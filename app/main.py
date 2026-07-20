@@ -84,6 +84,17 @@ async def ingest_google_form(file: UploadFile) -> JSONResponse:
     return JSONResponse(_persist_and_summarize(LeadSource.GOOGLE_FORM, final_state))
 
 
+@app.post("/ingest/csv")
+async def ingest_csv(file: UploadFile) -> JSONResponse:
+    # Generic "upload any CSV" path: no assumption about column names or
+    # which tool produced the file -- the RAG/LLM field mapper resolves the
+    # columns. This is the manual-import counterpart to the source-specific
+    # webhook endpoints above.
+    csv_text = (await file.read()).decode()
+    final_state = run_self_healing(LeadSource.CSV_UPLOAD, csv_text)
+    return JSONResponse(_persist_and_summarize(LeadSource.CSV_UPLOAD, final_state))
+
+
 @app.get("/leads")
 def list_leads(limit: int = 100) -> list[dict[str, Any]]:
     return read_recent("leads", limit).to_dict(orient="records")
