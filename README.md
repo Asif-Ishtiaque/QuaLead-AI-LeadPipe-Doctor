@@ -2,10 +2,12 @@
 
 Messy leads go in (Facebook webhook JSON, Instagram CSV, Google Form CSV,
 landing-page JSON) and clean, validated, deduplicated, scored leads come
-out -- in one canonical schema, regardless of source. When the cleaning
-code itself breaks on a batch it's never seen before, the agent reads the
-traceback, asks a local LLM to patch the broken function, and retries
-automatically before ever bothering a human.
+out -- in one canonical schema, regardless of source. Every lead comes out
+with a **quality score (0-100)**, a plain-English **diagnosis** of why it
+scored that way, and a **recommended next action** for the sales rep. When
+the cleaning code itself breaks on a batch it's never seen before, the
+agent reads the traceback, asks a local LLM to patch the broken function,
+and retries automatically before ever bothering a human.
 
 100% free and open source. No paid APIs, no cloud LLM calls -- everything
 (LLM, embeddings, vector store, database, ML) runs locally.
@@ -113,9 +115,12 @@ leadpipe-doctor/
 │   ├── cleaning/            pandas transforms (the code the agent patches)
 │   ├── validation/          Pydantic-based row validation
 │   ├── deduplication/       exact email/phone match dedup
-│   ├── scoring/             XGBoost + rule-based lead scoring
+│   ├── scoring/             XGBoost + rule-based scoring, plus diagnosis.py
+│   │                        (human-readable "why" + suggested rep action)
 │   ├── agent/                LangGraph self-healing loop
 │   └── utils/                config + storage
+├── tests/                    pytest suite (schema, transforms, dedup,
+│                             scoring, diagnosis, self-heal guards)
 ├── data/
 │   ├── sample_pack/           committed ~100k-row demo dataset (see its own README)
 │   ├── raw/                   gitignored scratch space for freshly generated data

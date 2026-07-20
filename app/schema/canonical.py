@@ -90,6 +90,12 @@ class Lead(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     quality_score: Optional[float] = Field(default=None, ge=0, le=100)
     status: LeadStatus = LeadStatus.CLEAN
+    # Human-readable outputs derived from the features/score/status after
+    # scoring (see app/scoring/diagnosis.py) -- populated in the pipeline,
+    # null until then. `diagnosis` is the "why this score" a sales manager
+    # reads; `suggested_action` is what a rep should do next.
+    diagnosis: Optional[str] = None
+    suggested_action: Optional[str] = None
     # Populated when status == "duplicate": which kept lead this one was
     # merged into, so a merge can be traced/audited later instead of the
     # discarded record just vanishing into an anonymous pile.

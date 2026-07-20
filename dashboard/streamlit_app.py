@@ -369,3 +369,40 @@ with tab_explore:
             file_name="leadpipe_filtered_leads.csv",
             mime="text/csv",
         )
+
+    # Per-lead diagnosis + recommended action -- the "why this score, and
+    # what should a rep do about it" view. Derived deterministically from
+    # the lead's own signals (see app/scoring/diagnosis.py); shown here as
+    # callouts rather than buried as two columns in the table above.
+    if not table.empty and "diagnosis" in table.columns:
+        st.divider()
+        st.subheader("Lead diagnosis & recommended action")
+        detail = table.sort_values("created_at", ascending=False) if "created_at" in table.columns else table
+        options = list(range(len(detail)))
+
+        def _label(i: int) -> str:
+            row = detail.iloc[i]
+            name = " ".join(str(row.get(c) or "").strip() for c in ("first_name", "last_name")).strip() or "(no name)"
+            email = row.get("email") or "(no email)"
+            score = row.get("quality_score")
+            score_str = f"{score:.0f}" if pd.notna(score) else "-"
+            return f"{name} <{email}> - score {score_str}"
+
+        idx = st.selectbox("Pick a lead", options=options, format_func=_label)
+        row = detail.iloc[idx]
+        status = str(row.get("status") or "")
+        score = row.get("quality_score")
+        c1, c2 = st.columns([1, 3])
+        c1.metric("Quality score", f"{score:.0f}" if pd.notna(score) else "-")
+        c1.metric("Status", status or "-")
+        with c2:
+            st.markdown("**Diagnosis**")
+            st.info(row.get("diagnosis") or "No diagnosis on file (lead predates this feature -- re-ingest to populate).")
+            st.markdown("**Recommended action**")
+            action = row.get("suggested_action")
+            if action:
+                # Green for a go, amber/red for hold-or-verify -- a glanceable
+                # signal that matches what the text says.
+                (st.success if status == "clean" and pd.notna(score) and score >= 70 else st.warning)(action)
+            else:
+                st.write("No recommended action on file (re-ingest to populate).")

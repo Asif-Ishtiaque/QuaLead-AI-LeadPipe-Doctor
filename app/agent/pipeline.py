@@ -15,6 +15,7 @@ from app.deduplication.dedup import deduplicate
 from app.ingestion import ingest
 from app.mapping.mapper import apply_mapping, map_source_fields
 from app.schema.canonical import Lead, LeadSource, LeadStatus
+from app.scoring.diagnosis import diagnose, suggest_action
 from app.scoring.features import build_features
 from app.scoring.scorer import LeadScorer
 from app.utils.storage import find_existing_leads
@@ -61,6 +62,12 @@ def run_pipeline(source: LeadSource, raw_data: Any) -> PipelineResult:
     kept, duplicates = deduplicate(scored_valid)
     kept, duplicates = _dedup_against_existing(kept, duplicates)
     _flag_quality_concerns(kept)
+    # Diagnosis/action come last, after status and score are final, so the
+    # explanation matches exactly what a human sees. Applied to duplicates
+    # too -- they're persisted and shown, and "why was this the weaker
+    # duplicate" is exactly the kind of thing the diagnosis answers.
+    _annotate_diagnosis_and_action(kept)
+    _annotate_diagnosis_and_action(duplicates)
 
     return PipelineResult(
         source=source.value,
@@ -95,6 +102,14 @@ def _flag_quality_concerns(leads: list[Lead]) -> None:
             or no_contact_info
         ):
             lead.status = LeadStatus.FLAGGED
+
+
+def _annotate_diagnosis_and_action(leads: list[Lead]) -> None:
+    """Attach the human-readable diagnosis and suggested next action (see
+    app/scoring/diagnosis.py) once status and score are final."""
+    for lead in leads:
+        lead.diagnosis = diagnose(lead)
+        lead.suggested_action = suggest_action(lead)
 
 
 def _dedup_against_existing(kept: list[Lead], duplicates: list[Lead]) -> tuple[list[Lead], list[Lead]]:
