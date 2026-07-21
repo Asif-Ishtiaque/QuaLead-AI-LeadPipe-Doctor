@@ -9,7 +9,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import os
+
 from fastapi import FastAPI, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.agent import human_review
@@ -18,6 +21,21 @@ from app.schema.canonical import LeadSource
 from app.utils.storage import get_stats, persist_leads_atomic, read_recent, save_healing_events, save_invalid, save_leads
 
 app = FastAPI(title="LeadPipe Doctor", description="Self-healing lead ingestion agent")
+
+# The Streamlit dashboard calls this API server-side, so it never needed
+# CORS. The React frontend runs in the browser on a different origin
+# (Vite dev :5173, preview :4173, or the nginx container :8080), so those
+# fetches are subject to CORS -- without this middleware the browser blocks
+# every request. Origins are overridable via CORS_ALLOW_ORIGINS (comma-
+# separated); the default covers local dev. No credentials are used, so a
+# wildcard is acceptable if you'd rather not enumerate origins.
+_cors = os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:5173,http://localhost:4173,http://localhost:8080")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in _cors.split(",") if o.strip()] or ["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _persist_and_summarize(source: LeadSource, final_state: dict) -> dict[str, Any]:

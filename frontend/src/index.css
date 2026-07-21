@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    margin: 0;
+    background: theme("colors.ground");
+    color: theme("colors.ink");
+    font-family: theme("fontFamily.sans");
+    -webkit-font-smoothing: antialiased;
+  }
+  .tnum { font-variant-numeric: tabular-nums; }
+}
+
+/* Recharts: let our container control the background and remove the focus
+   outline on chart surfaces so panels read cleanly. */
+.recharts-wrapper:focus,
+.recharts-surface:focus { outline: none; }

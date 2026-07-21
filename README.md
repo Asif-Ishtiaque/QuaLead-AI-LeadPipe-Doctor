@@ -121,6 +121,8 @@ leadpipe-doctor/
 │   └── utils/                config + storage
 ├── tests/                    pytest suite (schema, transforms, dedup,
 │                             scoring, diagnosis, self-heal guards)
+├── frontend/                 React (Vite + TS + Tailwind) client UI over the
+│                             API -- see frontend/README.md
 ├── data/
 │   ├── sample_pack/           committed ~100k-row demo dataset (see its own README)
 │   ├── raw/                   gitignored scratch space for freshly generated data
@@ -150,8 +152,14 @@ python3 -m scripts.replay     # feed the committed 100k+ sample pack into the ru
 ```
 
 Then open:
-- Dashboard: http://localhost:8501 -- should show ~90k clean leads, duplicates, and invalid rows within a few minutes
+- **React app: http://localhost:8080** -- the premium client UI (Vite + React + Tailwind; see `frontend/`)
+- Streamlit dashboard: http://localhost:8501 -- the internal/ops view; same data, different surface
 - API docs: http://localhost:8000/docs
+
+Two front-ends, one backend: the React app (`frontend/`) and the Streamlit
+dashboard both read the same FastAPI endpoints. The React app is the
+polished, shippable UI; Streamlit stays as a zero-build ops view. The Python
+pipeline is untouched by either.
 
 `docker compose up -d` also starts `ollama-init`, a one-shot container
 that pulls `qwen2.5:3b` and `nomic-embed-text` automatically the first

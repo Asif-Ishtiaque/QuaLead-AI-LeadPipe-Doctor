@@ -107,6 +107,22 @@ services:
     depends_on:
       - api
 
+  # React frontend (Vite build served by nginx). The browser reaches the API
+  # on the host at :8000, so VITE_API_BASE_URL is baked to localhost:8000 --
+  # NOT the internal `api` service name (the fetch runs in the user's browser,
+  # not the container). The Streamlit dashboard above still works too; this is
+  # the premium client UI alongside it.
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:8000
+    container_name: leadpipe-frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+
 volumes:
   pg_data:
   chroma_data:
