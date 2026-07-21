@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { num } from "../lib/format";
+import { ErrorBoundary } from "./ErrorBoundary";
 
 export function KpiCard({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
   return (
@@ -29,7 +30,7 @@ export function Panel({ title, action, cap, children }: { title: string; action?
         {action}
       </div>
       {cap && <p className="text-[0.78rem] text-muted m-0 mb-3.5">{cap}</p>}
-      {children}
+      <ErrorBoundary label={title}>{children}</ErrorBoundary>
     </div>
   );
 }

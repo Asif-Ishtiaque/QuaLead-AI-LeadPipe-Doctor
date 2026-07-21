@@ -1,6 +1,5 @@
 import {
-  Bar, BarChart, Cell, Pie, PieChart, PolarAngleAxis, PolarGrid, Radar, RadarChart,
-  ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { COLORS, num, prettySource, SOURCE_COLORS, STATUS_COLORS } from "../lib/format";
 
@@ -78,23 +77,69 @@ export function AvgBySource({ data }: { data: { source: string; avg: number }[] 
 }
 
 export type RadarSeries = { source: string; color: string; values: Record<string, number> };
+
+// Hand-rolled SVG radar. Recharts' RadarChart (2.15) throws internally under
+// StrictMode's double-render ("Cannot read properties of null (reading 'map')"),
+// so we render our own — deterministic, dependency-free, and it degrades
+// gracefully when there are fewer than 3 axes.
 export function SignalRadar({ axes, series }: { axes: string[]; series: RadarSeries[] }) {
-  const data = axes.map((axis) => {
-    const row: Record<string, number | string> = { axis };
-    series.forEach((s) => (row[s.source] = s.values[axis] ?? 0));
-    return row;
-  });
+  const SIZE = 240;
+  const C = SIZE / 2;
+  const R = 82;
+  const n = axes.length;
+  if (n < 3) return <div className="h-[230px] grid place-items-center text-[0.82rem] text-muted">Not enough signals to plot.</div>;
+
+  const angle = (i: number) => -Math.PI / 2 + (i * 2 * Math.PI) / n;
+  const point = (i: number, radius: number): [number, number] => [
+    C + radius * Math.cos(angle(i)),
+    C + radius * Math.sin(angle(i)),
+  ];
+  const polygon = (radiusFor: (i: number) => number) =>
+    axes.map((_, i) => point(i, radiusFor(i)).join(",")).join(" ");
+
+  const rings = [0.25, 0.5, 0.75, 1];
+
   return (
-    <ResponsiveContainer width="100%" height={230}>
-      <RadarChart data={data} outerRadius="72%">
-        <PolarGrid stroke="#E3E6EC" />
-        <PolarAngleAxis dataKey="axis" tick={{ fontSize: 11, fill: COLORS.muted }} />
-        {series.map((s) => (
-          <Radar key={s.source} dataKey={s.source} stroke={s.color} fill={s.color} fillOpacity={0.13} strokeWidth={2} />
+    <div className="h-[230px] grid place-items-center">
+      <svg viewBox={`0 0 ${SIZE} ${SIZE}`} width="100%" height={230} role="img" aria-label="Signal completeness radar">
+        {/* grid rings */}
+        {rings.map((f) => (
+          <polygon key={f} points={polygon(() => R * f)} fill="none" stroke="#E3E6EC" strokeWidth={1} />
         ))}
-        <Tooltip formatter={(v: number) => `${v}%`} />
-      </RadarChart>
-    </ResponsiveContainer>
+        {/* spokes + axis labels */}
+        {axes.map((axis, i) => {
+          const [sx, sy] = point(i, R);
+          const [lx, ly] = point(i, R + 16);
+          return (
+            <g key={axis}>
+              <line x1={C} y1={C} x2={sx} y2={sy} stroke="#E3E6EC" strokeWidth={1} />
+              <text
+                x={lx}
+                y={ly}
+                fontSize={11}
+                fill={COLORS.muted}
+                textAnchor={Math.abs(lx - C) < 2 ? "middle" : lx > C ? "start" : "end"}
+                dominantBaseline="middle"
+              >
+                {axis}
+              </text>
+            </g>
+          );
+        })}
+        {/* series polygons */}
+        {series.map((s) => (
+          <polygon
+            key={s.source}
+            points={polygon((i) => (R * (s.values[axes[i]] ?? 0)) / 100)}
+            fill={s.color}
+            fillOpacity={0.13}
+            stroke={s.color}
+            strokeWidth={2}
+            strokeLinejoin="round"
+          />
+        ))}
+      </svg>
+    </div>
   );
 }
 
