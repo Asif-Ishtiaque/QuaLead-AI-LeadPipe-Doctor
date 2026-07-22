@@ -23,4 +23,6 @@ COPY . .
 
 EXPOSE 8000 8501
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Two workers so a single slow upload (offloaded to a threadpool, but still
+# holding a worker thread) can't starve the dashboard's read requests.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

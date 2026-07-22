@@ -12,6 +12,7 @@ from typing import Any
 import os
 
 from fastapi import FastAPI, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -75,6 +76,43 @@ def _persist_and_summarize(source: LeadSource, final_state: dict) -> dict[str, A
     }
 
 
+def _decode(raw: bytes | str) -> str:
+    # Tolerant decode. Excel's default "CSV (Comma delimited)" export is
+    # Windows-1252, and "CSV UTF-8" prepends a BOM -- strict UTF-8 would raise
+    # UnicodeDecodeError on any accented name or smart quote and 500 the
+    # request before the pipeline ever runs. utf-8-sig strips the BOM;
+    # errors="replace" guarantees no byte sequence can crash the upload.
+    return raw.decode("utf-8-sig", errors="replace") if isinstance(raw, (bytes, bytearray)) else raw
+
+
+def _run_and_persist(source: LeadSource, raw_text: str) -> dict[str, Any]:
+    return _persist_and_summarize(source, run_self_healing(source, raw_text))
+
+
+async def _ingest(source: LeadSource, raw_text: str) -> JSONResponse:
+    # The pipeline + persistence do blocking I/O (LLM field-mapping, embedding
+    # lookups, Postgres writes) that can run for tens of seconds. Offloading to
+    # a threadpool keeps the event loop free, so the dashboard's 8s live polls
+    # don't freeze while an upload processes. Any unexpected failure returns a
+    # friendly payload (HTTP 200, status="error") -- never a raw 500 on screen.
+    try:
+        return JSONResponse(await run_in_threadpool(_run_and_persist, source, raw_text))
+    except Exception:
+        return JSONResponse(
+            {
+                "status": "error",
+                "retries": 0,
+                "healing_events": [],
+                "summary": None,
+                "message": "We processed your file but hit a problem saving the results. Please try again.",
+            }
+        )
+
+
+def _clamp(value: int, lo: int, hi: int) -> int:
+    return max(lo, min(value, hi))
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -82,51 +120,37 @@ def health() -> dict[str, str]:
 
 @app.post("/ingest/facebook")
 async def ingest_facebook(request: Request) -> JSONResponse:
-    # Raw body, not a Pydantic-parsed dict: accepts either one JSON
-    # document or JSONL (one webhook payload per line) -- FastAPI's
-    # automatic body parsing would reject JSONL as invalid JSON before
-    # our code ever saw it, since multiple newline-separated objects
-    # aren't one valid JSON document.
-    raw_text = (await request.body()).decode()
-    final_state = run_self_healing(LeadSource.FACEBOOK, raw_text)
-    return JSONResponse(_persist_and_summarize(LeadSource.FACEBOOK, final_state))
+    # Raw body, not a Pydantic-parsed dict: accepts either one JSON document
+    # or JSONL (one webhook payload per line) -- FastAPI's automatic body
+    # parsing would reject JSONL as invalid JSON before our code ever saw it.
+    return await _ingest(LeadSource.FACEBOOK, _decode(await request.body()))
 
 
 @app.post("/ingest/landing-page")
 async def ingest_landing_page(request: Request) -> JSONResponse:
-    raw_text = (await request.body()).decode()
-    final_state = run_self_healing(LeadSource.LANDING_PAGE, raw_text)
-    return JSONResponse(_persist_and_summarize(LeadSource.LANDING_PAGE, final_state))
+    return await _ingest(LeadSource.LANDING_PAGE, _decode(await request.body()))
 
 
 @app.post("/ingest/instagram")
 async def ingest_instagram(file: UploadFile) -> JSONResponse:
-    csv_text = (await file.read()).decode()
-    final_state = run_self_healing(LeadSource.INSTAGRAM, csv_text)
-    return JSONResponse(_persist_and_summarize(LeadSource.INSTAGRAM, final_state))
+    return await _ingest(LeadSource.INSTAGRAM, _decode(await file.read()))
 
 
 @app.post("/ingest/google-form")
 async def ingest_google_form(file: UploadFile) -> JSONResponse:
-    csv_text = (await file.read()).decode()
-    final_state = run_self_healing(LeadSource.GOOGLE_FORM, csv_text)
-    return JSONResponse(_persist_and_summarize(LeadSource.GOOGLE_FORM, final_state))
+    return await _ingest(LeadSource.GOOGLE_FORM, _decode(await file.read()))
 
 
 @app.post("/ingest/csv")
 async def ingest_csv(file: UploadFile) -> JSONResponse:
-    # Generic "upload any CSV" path: no assumption about column names or
-    # which tool produced the file -- the RAG/LLM field mapper resolves the
-    # columns. This is the manual-import counterpart to the source-specific
-    # webhook endpoints above.
-    csv_text = (await file.read()).decode()
-    final_state = run_self_healing(LeadSource.CSV_UPLOAD, csv_text)
-    return JSONResponse(_persist_and_summarize(LeadSource.CSV_UPLOAD, final_state))
+    # Generic "upload any CSV" path: no assumption about column names or which
+    # tool produced the file -- the RAG/LLM field mapper resolves the columns.
+    return await _ingest(LeadSource.CSV_UPLOAD, _decode(await file.read()))
 
 
 @app.get("/leads")
 def list_leads(limit: int = 100) -> list[dict[str, Any]]:
-    return read_recent("leads", limit).to_dict(orient="records")
+    return read_recent("leads", _clamp(limit, 1, 1000)).to_dict(orient="records")
 
 
 @app.get("/leads/top")
@@ -139,7 +163,7 @@ def list_top_leads(
     # Highest-scoring leads for the "work these first" panels. Ordering + cap
     # live in SQL, so the response is `limit` rows, not the whole table.
     # Optional source / score-range filters back the Lead Analytics controls.
-    return top_leads(limit=limit, source=source, min_score=min_score, max_score=max_score)
+    return top_leads(limit=_clamp(limit, 1, 200), source=source, min_score=min_score, max_score=max_score)
 
 
 @app.get("/leads/ranked")
@@ -151,8 +175,12 @@ def list_ranked_leads(
     max_score: float | None = None,
 ) -> dict[str, Any]:
     # Paginated score-ranked call list: one page of rows + the true match
-    # total, so the UI can page without downloading the whole table.
-    return ranked_leads(limit=limit, offset=offset, source=source, min_score=min_score, max_score=max_score)
+    # total, so the UI can page without downloading the whole table. limit is
+    # capped and offset floored so a hand-crafted request can't ask for a
+    # multi-megabyte page or a negative window.
+    return ranked_leads(
+        limit=_clamp(limit, 1, 500), offset=max(0, offset), source=source, min_score=min_score, max_score=max_score
+    )
 
 
 @app.get("/leads/search")
@@ -160,7 +188,7 @@ def search_leads_endpoint(q: str | None = None, source: str | None = None, limit
     # Server-side search for the Leads table: returns the matching page of
     # rows plus the true match total ("showing N of M"), without the browser
     # ever downloading M rows.
-    return search_leads(q=q, source=source, limit=limit)
+    return search_leads(q=q, source=source, limit=_clamp(limit, 1, 500))
 
 
 @app.get("/analytics")

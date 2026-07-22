@@ -12,7 +12,10 @@ import pandas as pd
 
 
 def parse_google_form_csv(csv_text: str | bytes) -> list[dict[str, Any]]:
-    buf = StringIO(csv_text.decode() if isinstance(csv_text, bytes) else csv_text)
+    text = csv_text.decode() if isinstance(csv_text, bytes) else csv_text
+    if not text or not text.strip():
+        return []  # empty/whitespace-only file -> no rows, not a parser crash
+    buf = StringIO(text)
     df = pd.read_csv(buf, dtype=str)
     df = df.where(pd.notna(df), None)
     return df.to_dict(orient="records")
