@@ -98,6 +98,15 @@ export const useSetDisposition = () => {
   });
 };
 
+// Per-lead explainability signals; only fetched when a lead is selected.
+export const useExplain = (leadId: string | null | undefined) =>
+  useQuery({
+    queryKey: ["explain", leadId],
+    queryFn: () => api.explainLead(leadId as string),
+    enabled: !!leadId,
+    staleTime: 30_000,
+  });
+
 export const usePipelineRuns = (limit = 20) =>
   useQuery({ queryKey: ["pipeline-runs", limit], queryFn: () => api.pipelineRuns(limit), ...live });
 

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { num } from "../lib/format";
+import { COLORS, num } from "../lib/format";
 import { ErrorBoundary } from "./ErrorBoundary";
 
 export function KpiCard({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
@@ -48,6 +48,28 @@ export function Avatar({ text, color }: { text: string; color: string }) {
     <span className="w-[30px] h-[30px] rounded-full grid place-items-center text-white font-bold text-[0.76rem] shrink-0" style={{ background: color }}>
       {text}
     </span>
+  );
+}
+
+// Explainability panel: the concrete signals behind a score as +/- rows.
+export function Signals({ positive, negative, loading }: { positive: string[]; negative: string[]; loading?: boolean }) {
+  if (loading) return <div className="h-16 rounded-xl bg-content border border-line animate-pulse" />;
+  const rows = [
+    ...positive.map((text) => ({ text, good: true })),
+    ...negative.map((text) => ({ text, good: false })),
+  ];
+  if (!rows.length) return <div className="text-[0.82rem] text-muted">No standout signals — an ordinary, complete lead.</div>;
+  return (
+    <div className="flex flex-col gap-1.5">
+      {rows.map((r) => (
+        <div key={r.text} className="flex items-center gap-2.5 text-[0.86rem] rounded-lg px-2.5 py-1.5"
+          style={{ background: `${(r.good ? COLORS.good : COLORS.bad)}12` }}>
+          <span className="w-[18px] h-[18px] rounded-full grid place-items-center text-white text-[0.66rem] font-black shrink-0"
+            style={{ background: r.good ? COLORS.good : COLORS.bad }}>{r.good ? "✓" : "✕"}</span>
+          <span className="first-letter:uppercase">{r.text}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 

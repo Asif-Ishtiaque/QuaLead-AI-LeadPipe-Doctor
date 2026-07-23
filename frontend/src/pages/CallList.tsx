@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { useCallList, useSetDisposition } from "../hooks/queries";
-import { Avatar, Badge, Panel } from "../components/ui";
+import { useCallList, useSetDisposition, useExplain } from "../hooks/queries";
+import { Avatar, Badge, Panel, Signals } from "../components/ui";
 import { band, bandColor, COLORS, initials, leadName, prettySource } from "../lib/format";
 import type { CallStatus } from "../lib/types";
 
@@ -24,6 +24,7 @@ export default function CallList() {
 
   const list = data ?? [];
   const lead = list[idx];
+  const explain = useExplain(lead?.lead_id);
 
   if (isError) return <div className="text-bad bg-panel rounded-xl2 border border-line p-6">Couldn’t reach the API.</div>;
   if (isLoading) return <div className="h-64 rounded-2xl bg-panel border border-line animate-pulse" />;
@@ -103,8 +104,12 @@ export default function CallList() {
             </div>
 
             <div>
-              <div className="text-[0.78rem] font-semibold text-muted mb-1">Why this lead</div>
-              <div className="bg-brandbg rounded-xl px-4 py-3 text-[0.88rem]">{lead.diagnosis ?? "No diagnosis on file."}</div>
+              <div className="text-[0.78rem] font-semibold text-muted mb-1">Why this lead <span className="font-normal">· the signals behind the score</span></div>
+              <Signals
+                positive={explain.data?.positive_signals ?? []}
+                negative={explain.data?.negative_signals ?? []}
+                loading={explain.isLoading}
+              />
             </div>
             <div>
               <div className="text-[0.78rem] font-semibold text-muted mb-1">Suggested action</div>

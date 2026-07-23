@@ -1,4 +1,4 @@
-import type { Analytics, CallStatus, Dataset, HealingEvent, IngestResponse, Lead, LeadSearchResult, PipelineRun, SourcePerf, Stats } from "./types";
+import type { Analytics, CallStatus, Dataset, HealingEvent, IngestResponse, Lead, LeadExplain, LeadSearchResult, PipelineRun, SourcePerf, Stats } from "./types";
 
 export const API_BASE =
   (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ||
@@ -59,6 +59,7 @@ export const api = {
     get<Lead[]>(`/leads/call-list?${ds(new URLSearchParams({ limit: String(limit) }), datasetId)}`),
   setLeadStatus: (leadId: string, status: CallStatus) =>
     send<{ status: string; lead_id: string; disposition: CallStatus }>("POST", `/leads/${encodeURIComponent(leadId)}/status`, { status }),
+  explainLead: (leadId: string) => get<LeadExplain>(`/leads/${encodeURIComponent(leadId)}/explain`),
 
   sourcePerformance: (datasetId?: string | null) =>
     get<SourcePerf[]>(`/analytics/source-performance?${ds(new URLSearchParams(), datasetId)}`),

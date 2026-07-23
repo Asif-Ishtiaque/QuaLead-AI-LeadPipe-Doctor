@@ -99,6 +99,18 @@ def diagnose(lead: Lead) -> str:
     return " ".join(parts)
 
 
+def explain(lead: Lead) -> dict[str, list[str]]:
+    """The structured version of diagnose(): the positive and negative signals
+    behind the score as separate lists, for the explainability panel. Same
+    underlying signals the prose diagnosis is assembled from -- just not
+    flattened into a sentence."""
+    f = build_features(lead)
+    return {
+        "positive_signals": _positive_signals(lead, f),
+        "negative_signals": _negative_signals(lead, f),
+    }
+
+
 def suggest_action(lead: Lead) -> str:
     f = build_features(lead)
     score = lead.quality_score if lead.quality_score is not None else 0.0

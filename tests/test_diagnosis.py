@@ -6,7 +6,7 @@ signal phrases and the score-band routing, not just "a string came back"."""
 from datetime import datetime, timezone
 
 from app.schema.canonical import Lead, LeadSource
-from app.scoring.diagnosis import diagnose, suggest_action
+from app.scoring.diagnosis import diagnose, explain, suggest_action
 
 
 def _lead(**overrides) -> Lead:
@@ -35,6 +35,19 @@ def test_strong_lead_diagnosis_names_its_strengths():
     assert "opted in to contact" in d
     assert "both email and phone captured" in d
     assert "demo_request" in d  # the actual campaign id, not a generic phrase
+
+
+def test_explain_returns_structured_signals():
+    e = explain(_lead())
+    assert "non-personal email domain" in e["positive_signals"]
+    assert "both email and phone captured" in e["positive_signals"]
+    assert isinstance(e["negative_signals"], list)
+
+
+def test_explain_surfaces_negatives_for_weak_lead():
+    e = explain(_lead(email=None, phone_e164=None, consent=False, quality_score=15.0))
+    assert "no email or phone on file" in e["negative_signals"]
+    assert "no marketing consent captured" in e["negative_signals"]
 
 
 def test_weak_lead_diagnosis_names_its_concerns():

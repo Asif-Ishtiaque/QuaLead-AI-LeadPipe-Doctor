@@ -364,6 +364,12 @@ def _dataset_clause(dataset_id: str | None, params: dict) -> str:
     return ""
 
 
+def get_lead(lead_id: str) -> dict | None:
+    """Fetch one lead's rendered columns by id (for the explainability panel)."""
+    rows = _lead_rows("lead_id = :lid", {"lid": lead_id}, limit=1, order="lead_id")
+    return rows[0] if rows else None
+
+
 def _score_filter(
     source: str | None, min_score: float | None, max_score: float | None, dataset_id: str | None = None
 ) -> tuple[str, dict]:

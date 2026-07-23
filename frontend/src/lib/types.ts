@@ -25,6 +25,17 @@ export interface Lead {
   raw_payload?: unknown;
 }
 
+// Structured "why this score" from /leads/{id}/explain.
+export interface LeadExplain {
+  lead_id: string;
+  positive_signals: string[];
+  negative_signals: string[];
+  diagnosis: string | null;
+  suggested_action: string | null;
+  quality_score: number | null;
+  status: string | null;
+}
+
 // An upload container from /datasets. Every upload is one dataset.
 export interface Dataset {
   dataset_id: string;

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useSearchLeads } from "../hooks/queries";
-import { Avatar, Badge, Panel } from "../components/ui";
+import { useSearchLeads, useExplain } from "../hooks/queries";
+import { Avatar, Badge, Panel, Signals } from "../components/ui";
 import { bandColor, band, leadName, initials, prettySource, STATUS_COLORS, SOURCE_COLORS, COLORS } from "../lib/format";
 import type { Lead } from "../lib/types";
 
@@ -123,6 +123,7 @@ function LeadInsight({ lead }: { lead: Lead }) {
   const color = bandColor(lead.quality_score);
   const score = lead.quality_score;
   const deg = score != null ? (score / 100) * 360 : 0;
+  const explain = useExplain(lead.lead_id);
   return (
     <Panel title="Lead insights" cap="Why this lead scored the way it did — and what to do next.">
       <div className="grid grid-cols-1 md:grid-cols-[160px_1fr] gap-6 items-start">
@@ -138,8 +139,12 @@ function LeadInsight({ lead }: { lead: Lead }) {
         </div>
         <div className="flex flex-col gap-3">
           <div>
-            <div className="font-semibold mb-1.5">Diagnosis <span className="text-muted text-[0.8rem] font-normal">· why this score</span></div>
-            <div className="bg-brandbg text-ink rounded-xl px-4 py-3 text-[0.88rem]">{lead.diagnosis ?? "No diagnosis on file — re-ingest this lead to populate it."}</div>
+            <div className="font-semibold mb-1.5">Why this score <span className="text-muted text-[0.8rem] font-normal">· the signals behind it</span></div>
+            <Signals
+              positive={explain.data?.positive_signals ?? []}
+              negative={explain.data?.negative_signals ?? []}
+              loading={explain.isLoading}
+            />
           </div>
           <div>
             <div className="font-semibold mb-1.5">Recommended action <span className="text-muted text-[0.8rem] font-normal">· what a rep should do next</span></div>

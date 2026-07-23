@@ -22,7 +22,8 @@ from pydantic import BaseModel
 from app.agent import human_review
 from app.agent.graph import run_self_healing
 from app.mapping import rag_store
-from app.schema.canonical import LeadSource
+from app.schema.canonical import Lead, LeadSource
+from app.scoring.diagnosis import explain as explain_signals
 from app.utils.storage import (
     CALL_STATUSES,
     backfill_datasets_by_source,
@@ -33,6 +34,7 @@ from app.utils.storage import (
     finish_dataset,
     get_analytics,
     get_dataset,
+    get_lead,
     get_pipeline_run,
     get_stats,
     list_datasets,
@@ -279,6 +281,47 @@ def search_leads_endpoint(
 def get_call_list(limit: int = 20, dataset_id: str | None = None) -> list[dict[str, Any]]:
     # The rep's prioritized queue, optionally scoped to one dataset.
     return call_list(limit=_clamp(limit, 1, 200), dataset_id=dataset_id)
+
+
+@app.get("/leads/{lead_id}/explain")
+def explain_lead(lead_id: str) -> JSONResponse:
+    # The structured "why this score": positive/negative signals for the
+    # explainability panel. Computed live from the stored lead (no extra
+    # columns). Unknown id -> friendly 404.
+    row = get_lead(lead_id)
+    if row is None:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Lead not found."})
+    positive: list[str] = []
+    negative: list[str] = []
+    try:
+        lead = Lead(
+            first_name=row.get("first_name"),
+            last_name=row.get("last_name"),
+            email=row.get("email"),
+            phone_e164=row.get("phone_e164"),
+            source=row["source"],
+            campaign_id=row.get("campaign_id"),
+            consent=bool(row.get("consent")),
+            created_at=row.get("created_at"),
+            quality_score=row.get("quality_score"),
+            status=row.get("status") or "clean",
+        )
+        sig = explain_signals(lead)
+        positive, negative = sig["positive_signals"], sig["negative_signals"]
+    except Exception:
+        # Fall back to no structured signals; the prose diagnosis still shows.
+        pass
+    return JSONResponse(
+        {
+            "lead_id": lead_id,
+            "positive_signals": positive,
+            "negative_signals": negative,
+            "diagnosis": row.get("diagnosis"),
+            "suggested_action": row.get("suggested_action"),
+            "quality_score": row.get("quality_score"),
+            "status": row.get("status"),
+        }
+    )
 
 
 @app.post("/leads/{lead_id}/status")
