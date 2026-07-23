@@ -11,11 +11,15 @@ const IconSearch = () => (<svg viewBox="0 0 24 24" fill="none" strokeWidth="2" s
 const IconHeal = () => (<svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 6.5a3.5 3.5 0 0 0-5 0l-3.5 3.5a3.5 3.5 0 0 0 5 5"/><path d="M10 17.5a3.5 3.5 0 0 0 5 0l3.5-3.5a3.5 3.5 0 0 0-5-5"/></svg>);
 const IconUpload = () => (<svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 15V4M8.5 7.5 12 4l3.5 3.5"/><path d="M5 15v3.5h14V15"/></svg>);
 const IconRefresh = () => (<svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 4v4h-4"/></svg>);
+const IconPhone = () => (<svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6.5 3h3l1.5 4.5-2.2 1.4a11 11 0 0 0 5.3 5.3l1.4-2.2 4.5 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.2 2 2 0 0 1 6.5 3Z"/></svg>);
+const IconSources = () => (<svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 21V11M12 21V4M19 21v-6"/></svg>);
 
 const NAV = [
   { to: "/", label: "Overview", icon: <IconHome />, end: true },
+  { to: "/call-list", label: "Call List", icon: <IconPhone />, end: false },
   { to: "/leads", label: "Leads", icon: <IconLeads />, end: false },
   { to: "/analytics", label: "Lead Analytics", icon: <IconChart />, end: false },
+  { to: "/sources", label: "Source Performance", icon: <IconSources />, end: false },
   { to: "/data-quality", label: "Data Quality", icon: <IconSearch />, end: false },
   { to: "/self-healing", label: "Self-Healing", icon: <IconHeal />, end: false },
   { to: "/upload", label: "Upload Leads", icon: <IconUpload />, end: false },
@@ -23,8 +27,10 @@ const NAV = [
 
 const SUBTITLES: Record<string, [string, string]> = {
   "/": ["Overview", "Live pipeline health at a glance"],
+  "/call-list": ["Call List", "Your prioritized queue — work the best leads first"],
   "/leads": ["Leads", "Every lead, searchable, with its diagnosis"],
   "/analytics": ["Lead Analytics", "Where the quality is — and where it leaks"],
+  "/sources": ["Source Performance", "Which feeds bring quality — and which bring junk"],
   "/data-quality": ["Data Quality", "What’s failing, and where the mess comes from"],
   "/self-healing": ["Self-Healing", "The pipeline repairing its own code"],
   "/upload": ["Upload Leads", "Drop any CSV and let QuaLead AI sort it out"],

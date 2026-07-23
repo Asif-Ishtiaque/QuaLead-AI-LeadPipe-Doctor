@@ -3,6 +3,9 @@
 // contract means a lead can arrive with almost nothing populated).
 export type LeadStatus = "clean" | "flagged" | "duplicate";
 
+// The dispositions a rep can set on a lead from the call list.
+export type CallStatus = "contacted" | "not_interested" | "follow_up" | "high_priority";
+
 export interface Lead {
   lead_id: string;
   first_name: string | null;
@@ -18,7 +21,20 @@ export interface Lead {
   duplicate_of_lead_id: string | null;
   diagnosis?: string | null;
   suggested_action?: string | null;
+  disposition?: CallStatus | null;
   raw_payload?: unknown;
+}
+
+// Per-source scorecard from /analytics/source-performance.
+export interface SourcePerf {
+  source: string;
+  leads: number;
+  clean: number;
+  flagged: number;
+  invalid: number;
+  duplicates: number;
+  avg_score: number | null;
+  junk_percentage: number;
 }
 
 export interface Stats {

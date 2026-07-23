@@ -2,8 +2,16 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useSearchLeads } from "../hooks/queries";
 import { Avatar, Badge, Panel } from "../components/ui";
-import { bandColor, band, leadName, initials, prettySource, STATUS_COLORS, COLORS } from "../lib/format";
+import { bandColor, band, leadName, initials, prettySource, STATUS_COLORS, SOURCE_COLORS, COLORS } from "../lib/format";
 import type { Lead } from "../lib/types";
+
+// Quality quick-filter presets → the flagged param the API understands.
+type Quality = "all" | "high" | "suspicious";
+const QUALITY: { key: Quality; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "high", label: "High quality" },
+  { key: "suspicious", label: "Suspicious" },
+];
 
 const AV = ["#2563EB", "#7C5CFC", "#0EA5E9", "#F59E0B", "#16A34A"];
 const PAGE_SIZE = 200;
@@ -15,6 +23,9 @@ export default function Leads() {
   const [q, setQ] = useState(() => params.get("q") ?? "");
   const [debouncedQ, setDebouncedQ] = useState(() => (params.get("q") ?? "").trim());
   const [selected, setSelected] = useState<string | null>(null);
+  const [source, setSource] = useState("");
+  const [minScore, setMinScore] = useState(0);
+  const [quality, setQuality] = useState<Quality>("all");
 
   // If the top-bar search navigates here again with a new ?q=, adopt it.
   const urlQ = params.get("q") ?? "";
@@ -27,7 +38,14 @@ export default function Leads() {
     return () => clearTimeout(t);
   }, [q]);
 
-  const { data, isError } = useSearchLeads(debouncedQ, PAGE_SIZE);
+  // "High quality" = clean + high min score; "Suspicious" = flagged.
+  const flagged = quality === "suspicious" ? true : quality === "high" ? false : undefined;
+  const effectiveMin = quality === "high" ? Math.max(minScore, 70) : minScore;
+  const { data, isError } = useSearchLeads(debouncedQ, PAGE_SIZE, {
+    source: source || undefined,
+    minScore: effectiveMin > 0 ? effectiveMin : undefined,
+    flagged,
+  });
   const rows = data?.rows ?? [];
   const total = data?.total ?? 0;
 
@@ -42,6 +60,39 @@ export default function Leads() {
       <Panel title="Leads" cap={`Showing ${shown.toLocaleString()} of ${total.toLocaleString()} leads`}>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name or email…"
           className="w-full mb-3 border border-line2 rounded-xl px-3.5 py-2.5 text-[0.9rem] outline-none focus:border-brand" />
+
+        {/* smart filters */}
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3 mb-4 pb-4 border-b border-line">
+          <label className="flex items-center gap-2 text-[0.82rem]">
+            <span className="text-muted font-semibold">Source</span>
+            <select value={source} onChange={(e) => setSource(e.target.value)}
+              className="border border-line2 rounded-lg px-2.5 py-1.5 text-[0.82rem] bg-panel outline-none focus:border-brand cursor-pointer">
+              <option value="">All sources</option>
+              {Object.keys(SOURCE_COLORS).map((s) => <option key={s} value={s}>{prettySource(s)}</option>)}
+            </select>
+          </label>
+
+          <label className="flex items-center gap-2.5 text-[0.82rem]">
+            <span className="text-muted font-semibold whitespace-nowrap">Min score</span>
+            <input type="range" min={0} max={100} step={5} value={minScore}
+              onChange={(e) => setMinScore(Number(e.target.value))} className="w-36 accent-brand cursor-pointer" />
+            <span className="tnum font-bold w-7 text-right">{minScore}</span>
+          </label>
+
+          <div className="inline-flex rounded-lg border border-line2 overflow-hidden">
+            {QUALITY.map((qf) => (
+              <button key={qf.key} onClick={() => setQuality(qf.key)}
+                className={`px-3 py-1.5 text-[0.8rem] font-semibold transition-colors ${quality === qf.key ? "bg-brand text-white" : "text-muted hover:text-ink hover:bg-content"}`}>
+                {qf.label}
+              </button>
+            ))}
+          </div>
+
+          {(source || minScore > 0 || quality !== "all") && (
+            <button onClick={() => { setSource(""); setMinScore(0); setQuality("all"); }}
+              className="text-[0.8rem] text-brand font-semibold hover:underline ml-auto">Clear filters</button>
+          )}
+        </div>
         <div className="max-h-[360px] overflow-y-auto rounded-xl border border-line">
           <table className="w-full text-[0.85rem]">
             <thead className="sticky top-0 bg-panel"><tr className="text-[0.68rem] uppercase tracking-wide text-faint">

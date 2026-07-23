@@ -1,5 +1,6 @@
-import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import type { CallStatus } from "../lib/types";
 
 // Poll the read endpoints on a light interval so the dashboard feels live,
 // mirroring the Streamlit app's 5s cache TTL.
@@ -35,15 +36,38 @@ export const useRankedLeads = (
     ...live,
   });
 
-// Debounced search string flows in as `q`. keepPreviousData avoids the table
-// flashing empty between keystrokes.
-export const useSearchLeads = (q: string, limit = 200) =>
+// Debounced search string flows in as `q`, plus the smart-filter options.
+// keepPreviousData avoids the table flashing empty between keystrokes.
+export const useSearchLeads = (
+  q: string,
+  limit = 200,
+  opts?: { source?: string; minScore?: number; flagged?: boolean },
+) =>
   useQuery({
-    queryKey: ["search-leads", q, limit],
-    queryFn: () => api.searchLeads(q, limit),
+    queryKey: ["search-leads", q, limit, opts?.source ?? "", opts?.minScore ?? "", opts?.flagged ?? ""],
+    queryFn: () => api.searchLeads(q, limit, opts),
     placeholderData: keepPreviousData,
     ...live,
   });
+
+// The rep call queue. NOT on the live poll -- a rep works a stable snapshot;
+// worked leads drop off only on an explicit reload (refetch).
+export const useCallList = (limit = 20) =>
+  useQuery({ queryKey: ["call-list", limit], queryFn: () => api.callList(limit), staleTime: 60_000, refetchOnWindowFocus: false });
+
+export const useSourcePerformance = () =>
+  useQuery({ queryKey: ["source-performance"], queryFn: api.sourcePerformance, ...live });
+
+// Set a lead's disposition; refresh the stats/overview counts on success.
+export const useSetDisposition = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ leadId, status }: { leadId: string; status: CallStatus }) => api.setLeadStatus(leadId, status),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["stats"] });
+    },
+  });
+};
 
 export const useDuplicates = () => useQuery({ queryKey: ["duplicates"], queryFn: () => api.duplicates(), ...live });
 export const useInvalid = () => useQuery({ queryKey: ["invalid"], queryFn: () => api.invalid(), ...live });

@@ -1,4 +1,4 @@
-import type { Analytics, HealingEvent, IngestResponse, Lead, LeadSearchResult, Stats } from "./types";
+import type { Analytics, CallStatus, HealingEvent, IngestResponse, Lead, LeadSearchResult, SourcePerf, Stats } from "./types";
 
 export const API_BASE =
   (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ||
@@ -6,6 +6,16 @@ export const API_BASE =
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${path}`);
+  return res.json() as Promise<T>;
+}
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${path}`);
   return res.json() as Promise<T>;
 }
@@ -29,10 +39,21 @@ export const api = {
     if (opts?.maxScore != null) p.set("max_score", String(opts.maxScore));
     return get<LeadSearchResult>(`/leads/ranked?${p.toString()}`);
   },
-  searchLeads: (q: string, limit = 200, source?: string) =>
-    get<LeadSearchResult>(
-      `/leads/search?limit=${limit}${q ? `&q=${encodeURIComponent(q)}` : ""}${source ? `&source=${encodeURIComponent(source)}` : ""}`,
-    ),
+  searchLeads: (q: string, limit = 200, opts?: { source?: string; minScore?: number; flagged?: boolean }) => {
+    const p = new URLSearchParams({ limit: String(limit) });
+    if (q) p.set("q", q);
+    if (opts?.source) p.set("source", opts.source);
+    if (opts?.minScore != null) p.set("min_score", String(opts.minScore));
+    if (opts?.flagged != null) p.set("flagged", String(opts.flagged));
+    return get<LeadSearchResult>(`/leads/search?${p.toString()}`);
+  },
+
+  // Rep call-list workflow.
+  callList: (limit = 20) => get<Lead[]>(`/leads/call-list?limit=${limit}`),
+  setLeadStatus: (leadId: string, status: CallStatus) =>
+    post<{ status: string; lead_id: string; disposition: CallStatus }>(`/leads/${encodeURIComponent(leadId)}/status`, { status }),
+
+  sourcePerformance: () => get<SourcePerf[]>("/analytics/source-performance"),
 
   duplicates: (limit = 2000) => get<Lead[]>(`/duplicates?limit=${limit}`),
   invalid: (limit = 2000) => get<Record<string, unknown>[]>(`/invalid?limit=${limit}`),
