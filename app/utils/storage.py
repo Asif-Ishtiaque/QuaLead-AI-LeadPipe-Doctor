@@ -398,11 +398,20 @@ def ranked_leads(
     return {"total": int(total), "rows": rows}
 
 
-def search_leads(q: str | None = None, source: str | None = None, limit: int = 200) -> dict:
+def search_leads(
+    q: str | None = None,
+    source: str | None = None,
+    limit: int = 200,
+    min_score: float | None = None,
+    flagged: bool | None = None,
+) -> dict:
     """Server-side search for the Leads table. Returns at most `limit` rows
     plus the true total number of matches, so the UI can say "showing N of M"
     without ever downloading M rows. Matching is a case-insensitive substring
-    over name/email (bound parameter -> no injection surface)."""
+    over name/email (bound parameter -> no injection surface). The optional
+    min_score / flagged filters back the smart-filter controls: min_score is
+    the score slider; flagged=True narrows to suspicious (flagged) leads,
+    flagged=False to clean ones."""
     engine = get_engine()
     if not inspect(engine).has_table("leads"):
         return {"total": 0, "rows": []}
@@ -415,6 +424,12 @@ def search_leads(q: str | None = None, source: str | None = None, limit: int = 2
     if source:
         where += " AND source = :source"
         params["source"] = source
+    if min_score is not None:
+        where += " AND quality_score >= :min_score"
+        params["min_score"] = min_score
+    if flagged is not None:
+        where += " AND status = :status"
+        params["status"] = "flagged" if flagged else "clean"
 
     total = 0
     try:
@@ -430,6 +445,116 @@ def search_leads(q: str | None = None, source: str | None = None, limit: int = 2
         _ensure_seq_column(engine, "leads")
     order = "_seq DESC" if is_postgres else "created_at DESC"
     return {"total": int(total), "rows": _lead_rows(where, params, limit, order=order)}
+
+
+# --- Rep call-list workflow -------------------------------------------------
+
+# The dispositions a rep can set on a lead from the call list.
+CALL_STATUSES = {"contacted", "not_interested", "follow_up", "high_priority"}
+# Worked or dead leads drop off the call list; everything else stays queued.
+_CALL_LIST_HIDDEN = ("contacted", "not_interested")
+
+
+def _ensure_lead_columns(engine) -> None:
+    """Add the rep-workflow column the base schema doesn't create
+    (`disposition` = the call-list status a rep sets). Idempotent and
+    best-effort, matching the other ad-hoc migrations here (no Alembic). Only
+    the call-list/status paths touch this column, so the core read endpoints
+    are unaffected whether or not it exists yet."""
+    insp = inspect(engine)
+    if not insp.has_table("leads"):
+        return
+    try:
+        cols = {c["name"] for c in insp.get_columns("leads")}
+        if "disposition" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE leads ADD COLUMN IF NOT EXISTS disposition TEXT"))
+    except Exception:
+        pass
+
+
+def call_list(limit: int = 20) -> list[dict]:
+    """The rep's prioritized call queue: highest-scoring leads that still need
+    working. Leads marked contacted/not_interested drop off; high_priority
+    floats to the top. Same view columns as the other lead lists, plus the
+    current disposition."""
+    engine = get_engine()
+    _ensure_lead_columns(engine)
+    if not inspect(engine).has_table("leads"):
+        return []
+    hidden = ", ".join(f"'{s}'" for s in _CALL_LIST_HIDDEN)  # fixed literals, not user input
+    sql = (
+        f"SELECT {_LEAD_VIEW_COLUMNS}, disposition FROM leads "
+        f"WHERE quality_score IS NOT NULL AND (disposition IS NULL OR disposition NOT IN ({hidden})) "
+        f"ORDER BY (CASE WHEN disposition = 'high_priority' THEN 0 ELSE 1 END), quality_score DESC "
+        f"LIMIT :limit"
+    )
+    try:
+        with engine.connect() as conn:
+            return [dict(row._mapping) for row in conn.execute(text(sql), {"limit": limit})]
+    except Exception:
+        return []
+
+
+def set_disposition(lead_id: str, status: str) -> bool:
+    """Set a lead's call disposition. Returns False if the lead_id doesn't
+    exist (so the API can 404), True on a successful update. Status validity
+    is enforced at the API layer against CALL_STATUSES."""
+    engine = get_engine()
+    _ensure_lead_columns(engine)
+    try:
+        with engine.begin() as conn:
+            # Check existence explicitly rather than trusting UPDATE rowcount --
+            # DuckDB (dev fallback) doesn't report affected-row counts reliably,
+            # so the caller can't distinguish "updated" from "no such lead" off
+            # rowcount alone.
+            exists = conn.execute(
+                text("SELECT 1 FROM leads WHERE lead_id = :id LIMIT 1"), {"id": lead_id}
+            ).fetchone()
+            if not exists:
+                return False
+            conn.execute(
+                text("UPDATE leads SET disposition = :status WHERE lead_id = :id"),
+                {"status": status, "id": lead_id},
+            )
+            return True
+    except Exception:
+        return False
+
+
+def source_performance() -> list[dict]:
+    """Per-source scorecard for the Source Performance view: volume, average
+    quality score, and the junk rate (share of everything a source sent that
+    failed validation). Reuses get_analytics' aggregates -- no extra scan."""
+    a = get_analytics()
+    by = a["by_source"]
+    inv = a["invalid_by_source"]
+    dup = a["duplicate_by_source"]
+
+    rows = []
+    for source in sorted(set(by) | set(inv) | set(dup)):
+        m = by.get(source, {})
+        kept = int(m.get("total", 0))
+        scored = int(m.get("scored", 0))
+        sum_score = float(m.get("sum_score", 0.0))
+        invalid = int(inv.get(source, 0))
+        duplicates = int(dup.get(source, 0))
+        ingested = kept + invalid + duplicates
+        rows.append(
+            {
+                "source": source,
+                "leads": kept,
+                "clean": int(m.get("clean", 0)),
+                "flagged": int(m.get("flagged", 0)),
+                "invalid": invalid,
+                "duplicates": duplicates,
+                "avg_score": round(sum_score / scored, 1) if scored else None,
+                "junk_percentage": round(invalid / ingested * 100, 1) if ingested else 0.0,
+            }
+        )
+    # Best sources first (highest avg score); unscored sources sink to the end.
+    rows.sort(key=lambda r: (r["avg_score"] is None, -(r["avg_score"] or 0)))
+    return rows
 
 
 def get_analytics() -> dict:

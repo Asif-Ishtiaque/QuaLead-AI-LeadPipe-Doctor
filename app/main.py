@@ -15,11 +15,14 @@ from fastapi import FastAPI, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from app.agent import human_review
 from app.agent.graph import run_self_healing
 from app.schema.canonical import LeadSource
 from app.utils.storage import (
+    CALL_STATUSES,
+    call_list,
     get_analytics,
     get_stats,
     persist_leads_atomic,
@@ -29,8 +32,14 @@ from app.utils.storage import (
     save_invalid,
     save_leads,
     search_leads,
+    set_disposition,
+    source_performance,
     top_leads,
 )
+
+
+class StatusUpdate(BaseModel):
+    status: str
 
 app = FastAPI(title="LeadPipe Doctor", description="Self-healing lead ingestion agent")
 
@@ -184,11 +193,47 @@ def list_ranked_leads(
 
 
 @app.get("/leads/search")
-def search_leads_endpoint(q: str | None = None, source: str | None = None, limit: int = 200) -> dict[str, Any]:
+def search_leads_endpoint(
+    q: str | None = None,
+    source: str | None = None,
+    limit: int = 200,
+    min_score: float | None = None,
+    flagged: bool | None = None,
+) -> dict[str, Any]:
     # Server-side search for the Leads table: returns the matching page of
     # rows plus the true match total ("showing N of M"), without the browser
-    # ever downloading M rows.
-    return search_leads(q=q, source=source, limit=_clamp(limit, 1, 500))
+    # ever downloading M rows. min_score / flagged back the smart-filter
+    # controls (score slider, high-quality vs suspicious toggles).
+    return search_leads(q=q, source=source, limit=_clamp(limit, 1, 500), min_score=min_score, flagged=flagged)
+
+
+@app.get("/leads/call-list")
+def get_call_list(limit: int = 20) -> list[dict[str, Any]]:
+    # The rep's prioritized queue: highest-scoring leads still to be worked,
+    # with high_priority floated to the top and contacted/dead leads removed.
+    return call_list(limit=_clamp(limit, 1, 200))
+
+
+@app.post("/leads/{lead_id}/status")
+def update_lead_status(lead_id: str, body: StatusUpdate) -> JSONResponse:
+    # A rep dispositioning a lead from the call list. Unknown status -> 400
+    # with the allowed set; unknown lead -> 404. Both are friendly JSON, never
+    # a raw stack trace.
+    if body.status not in CALL_STATUSES:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": f"Unknown status '{body.status}'.", "allowed": sorted(CALL_STATUSES)},
+        )
+    if not set_disposition(lead_id, body.status):
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Lead not found."})
+    return JSONResponse({"status": "ok", "lead_id": lead_id, "disposition": body.status})
+
+
+@app.get("/analytics/source-performance")
+def analytics_source_performance() -> list[dict[str, Any]]:
+    # Per-source scorecard: volume, avg quality score, and junk rate -- for the
+    # Source Performance view (best/worst feed at a glance).
+    return source_performance()
 
 
 @app.get("/analytics")
