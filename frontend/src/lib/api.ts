@@ -1,4 +1,4 @@
-import type { Analytics, CallStatus, HealingEvent, IngestResponse, Lead, LeadSearchResult, SourcePerf, Stats } from "./types";
+import type { Analytics, CallStatus, HealingEvent, IngestResponse, Lead, LeadSearchResult, PipelineRun, SourcePerf, Stats } from "./types";
 
 export const API_BASE =
   (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ||
@@ -54,6 +54,11 @@ export const api = {
     post<{ status: string; lead_id: string; disposition: CallStatus }>(`/leads/${encodeURIComponent(leadId)}/status`, { status }),
 
   sourcePerformance: () => get<SourcePerf[]>("/analytics/source-performance"),
+
+  // Pipeline run history + workspace reset.
+  pipelineRuns: (limit = 20) => get<PipelineRun[]>(`/pipeline/runs?limit=${limit}`),
+  resetWorkspace: (opts: { leads: boolean; review_queue: boolean; chroma: boolean }) =>
+    post<{ status: string; cleared: Record<string, unknown> }>("/admin/reset", opts),
 
   duplicates: (limit = 2000) => get<Lead[]>(`/duplicates?limit=${limit}`),
   invalid: (limit = 2000) => get<Record<string, unknown>[]>(`/invalid?limit=${limit}`),

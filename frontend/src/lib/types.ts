@@ -25,6 +25,20 @@ export interface Lead {
   raw_payload?: unknown;
 }
 
+// One ingest run from /pipeline/runs (or /pipeline/status/{id}).
+export interface PipelineRun {
+  run_id: string;
+  source: string;
+  status: string; // "processing" | "completed" | "failed"
+  total_records: number | null;
+  processed: number | null;
+  failed: number | null;
+  duplicates: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+  time_taken_ms: number | null;
+}
+
 // Per-source scorecard from /analytics/source-performance.
 export interface SourcePerf {
   source: string;

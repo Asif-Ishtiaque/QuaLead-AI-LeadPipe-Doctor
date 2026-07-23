@@ -27,3 +27,12 @@ def read_all() -> list[dict[str, Any]]:
         return []
     with QUEUE_PATH.open() as f:
         return [json.loads(line) for line in f if line.strip()]
+
+
+def clear() -> int:
+    """Empty the review queue (used by the workspace reset). Returns how many
+    entries were removed."""
+    n = len(read_all())
+    if QUEUE_PATH.exists():
+        QUEUE_PATH.unlink()
+    return n

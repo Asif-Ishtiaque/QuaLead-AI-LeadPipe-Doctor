@@ -7,6 +7,7 @@ import LeadAnalytics from "./pages/LeadAnalytics";
 import SourcePerformance from "./pages/SourcePerformance";
 import DataQuality from "./pages/DataQuality";
 import SelfHealing from "./pages/SelfHealing";
+import Pipeline from "./pages/Pipeline";
 import Upload from "./pages/Upload";
 
 export default function App() {
@@ -20,6 +21,7 @@ export default function App() {
         <Route path="/sources" element={<SourcePerformance />} />
         <Route path="/data-quality" element={<DataQuality />} />
         <Route path="/self-healing" element={<SelfHealing />} />
+        <Route path="/pipeline" element={<Pipeline />} />
         <Route path="/upload" element={<Upload />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

@@ -6,6 +6,8 @@ so nothing else in the app needs to know which one is active."""
 from __future__ import annotations
 
 import json
+import uuid
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 
@@ -555,6 +557,121 @@ def source_performance() -> list[dict]:
     # Best sources first (highest avg score); unscored sources sink to the end.
     rows.sort(key=lambda r: (r["avg_score"] is None, -(r["avg_score"] or 0)))
     return rows
+
+
+# --- Pipeline run tracking --------------------------------------------------
+
+# The lead-data tables a workspace reset clears (operational history + rows).
+_RESET_TABLES = ("leads", "duplicate_leads", "invalid_leads", "healing_events", "pipeline_runs")
+
+
+def _ensure_pipeline_runs(engine) -> None:
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS pipeline_runs ("
+                    "run_id TEXT PRIMARY KEY, source TEXT, status TEXT, "
+                    "total_records INTEGER, processed INTEGER, failed INTEGER, duplicates INTEGER, "
+                    "started_at TEXT, finished_at TEXT, time_taken_ms BIGINT)"
+                )
+            )
+    except Exception:
+        pass
+
+
+def create_pipeline_run(source: str) -> str:
+    """Open a pipeline-run record (status='processing') and return its id. The
+    ingest endpoints call this at the start of a batch so a run is observable
+    while it's in flight and recorded as history once it finishes."""
+    engine = get_engine()
+    _ensure_pipeline_runs(engine)
+    run_id = str(uuid.uuid4())
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text("INSERT INTO pipeline_runs (run_id, source, status, started_at) VALUES (:r, :s, 'processing', :t)"),
+                {"r": run_id, "s": source, "t": datetime.now(timezone.utc).isoformat()},
+            )
+    except Exception:
+        pass
+    return run_id
+
+
+def finish_pipeline_run(
+    run_id: str,
+    *,
+    status: str = "completed",
+    total: int = 0,
+    processed: int = 0,
+    failed: int = 0,
+    duplicates: int = 0,
+) -> None:
+    """Close out a run: set the final counts, status, and elapsed time."""
+    engine = get_engine()
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(text("SELECT started_at FROM pipeline_runs WHERE run_id = :r"), {"r": run_id}).fetchone()
+            now = datetime.now(timezone.utc)
+            ms = None
+            if row and row[0]:
+                try:
+                    ms = int((now - datetime.fromisoformat(row[0])).total_seconds() * 1000)
+                except Exception:
+                    ms = None
+            conn.execute(
+                text(
+                    "UPDATE pipeline_runs SET status = :st, total_records = :tot, processed = :p, "
+                    "failed = :f, duplicates = :d, finished_at = :fin, time_taken_ms = :ms WHERE run_id = :r"
+                ),
+                {"st": status, "tot": total, "p": processed, "f": failed, "d": duplicates,
+                 "fin": now.isoformat(), "ms": ms, "r": run_id},
+            )
+    except Exception:
+        pass
+
+
+def get_pipeline_run(run_id: str) -> dict | None:
+    engine = get_engine()
+    _ensure_pipeline_runs(engine)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(text("SELECT * FROM pipeline_runs WHERE run_id = :r"), {"r": run_id}).fetchone()
+            return dict(row._mapping) if row else None
+    except Exception:
+        return None
+
+
+def recent_pipeline_runs(limit: int = 20) -> list[dict]:
+    engine = get_engine()
+    _ensure_pipeline_runs(engine)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT * FROM pipeline_runs ORDER BY started_at DESC LIMIT :limit"), {"limit": limit}
+            )
+            return [dict(r._mapping) for r in rows]
+    except Exception:
+        return []
+
+
+def clear_lead_tables() -> dict[str, str]:
+    """Delete all rows from the lead-data tables (workspace reset, clear-only).
+    Best-effort per table; skips ones that don't exist yet."""
+    engine = get_engine()
+    result: dict[str, str] = {}
+    insp = inspect(engine)
+    for table in _RESET_TABLES:
+        if not insp.has_table(table):
+            result[table] = "absent"
+            continue
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f'DELETE FROM "{table}"'))
+            result[table] = "cleared"
+        except Exception as exc:  # noqa: BLE001
+            result[table] = f"error: {exc}"
+    return result
 
 
 def get_analytics() -> dict:

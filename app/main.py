@@ -19,15 +19,21 @@ from pydantic import BaseModel
 
 from app.agent import human_review
 from app.agent.graph import run_self_healing
+from app.mapping import rag_store
 from app.schema.canonical import LeadSource
 from app.utils.storage import (
     CALL_STATUSES,
     call_list,
+    clear_lead_tables,
+    create_pipeline_run,
+    finish_pipeline_run,
     get_analytics,
+    get_pipeline_run,
     get_stats,
     persist_leads_atomic,
     ranked_leads,
     read_recent,
+    recent_pipeline_runs,
     save_healing_events,
     save_invalid,
     save_leads,
@@ -40,6 +46,12 @@ from app.utils.storage import (
 
 class StatusUpdate(BaseModel):
     status: str
+
+
+class ResetOptions(BaseModel):
+    leads: bool = True
+    review_queue: bool = True
+    chroma: bool = False
 
 app = FastAPI(title="LeadPipe Doctor", description="Self-healing lead ingestion agent")
 
@@ -104,15 +116,33 @@ async def _ingest(source: LeadSource, raw_text: str) -> JSONResponse:
     # a threadpool keeps the event loop free, so the dashboard's 8s live polls
     # don't freeze while an upload processes. Any unexpected failure returns a
     # friendly payload (HTTP 200, status="error") -- never a raw 500 on screen.
+    # Each ingest also opens a pipeline-run record so the batch is observable
+    # while in flight and kept as history afterward.
+    run_id = await run_in_threadpool(create_pipeline_run, source.value)
     try:
-        return JSONResponse(await run_in_threadpool(_run_and_persist, source, raw_text))
+        result = await run_in_threadpool(_run_and_persist, source, raw_text)
+        summary = result.get("summary") or {}
+        processed = int(summary.get("scored", 0) or 0)
+        duplicates = int(summary.get("duplicates", 0) or 0)
+        failed = int(summary.get("invalid", 0) or 0)
+        status = "completed" if result.get("status") != "error" else "failed"
+        await run_in_threadpool(
+            lambda: finish_pipeline_run(
+                run_id, status=status, total=processed + duplicates + failed,
+                processed=processed, failed=failed, duplicates=duplicates,
+            )
+        )
+        result["run_id"] = run_id
+        return JSONResponse(result)
     except Exception:
+        await run_in_threadpool(lambda: finish_pipeline_run(run_id, status="failed"))
         return JSONResponse(
             {
                 "status": "error",
                 "retries": 0,
                 "healing_events": [],
                 "summary": None,
+                "run_id": run_id,
                 "message": "We processed your file but hit a problem saving the results. Please try again.",
             }
         )
@@ -234,6 +264,42 @@ def analytics_source_performance() -> list[dict[str, Any]]:
     # Per-source scorecard: volume, avg quality score, and junk rate -- for the
     # Source Performance view (best/worst feed at a glance).
     return source_performance()
+
+
+@app.get("/pipeline/runs")
+def pipeline_runs(limit: int = 20) -> list[dict[str, Any]]:
+    # Recent ingest runs (newest first) for the pipeline-observability view.
+    return recent_pipeline_runs(limit=_clamp(limit, 1, 100))
+
+
+@app.get("/pipeline/status/{run_id}")
+def pipeline_status(run_id: str) -> JSONResponse:
+    # One run's live status/progress. Unknown id -> friendly 404.
+    run = get_pipeline_run(run_id)
+    if run is None:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Run not found."})
+    return JSONResponse(run)
+
+
+@app.post("/admin/reset")
+def admin_reset(body: ResetOptions) -> JSONResponse:
+    # Destructive: clears the workspace to an empty state (demo reset). Each
+    # part is opt-in via the request body; nothing is touched unless asked.
+    cleared: dict[str, Any] = {}
+    if body.leads:
+        cleared["tables"] = clear_lead_tables()
+    if body.review_queue:
+        try:
+            cleared["review_queue_removed"] = human_review.clear()
+        except Exception:
+            cleared["review_queue_removed"] = 0
+    if body.chroma:
+        try:
+            rag_store.get_client().delete_collection("field_mappings")
+            cleared["chroma_mappings"] = "cleared"
+        except Exception:
+            cleared["chroma_mappings"] = "skipped"
+    return JSONResponse({"status": "ok", "cleared": cleared})
 
 
 @app.get("/analytics")

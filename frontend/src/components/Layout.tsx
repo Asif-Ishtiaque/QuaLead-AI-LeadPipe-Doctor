@@ -13,6 +13,7 @@ const IconUpload = () => (<svg viewBox="0 0 24 24" fill="none" strokeWidth="2" s
 const IconRefresh = () => (<svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 4v4h-4"/></svg>);
 const IconPhone = () => (<svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6.5 3h3l1.5 4.5-2.2 1.4a11 11 0 0 0 5.3 5.3l1.4-2.2 4.5 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.2 2 2 0 0 1 6.5 3Z"/></svg>);
 const IconSources = () => (<svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 21V11M12 21V4M19 21v-6"/></svg>);
+const IconPipeline = () => (<svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h4l2.5 6 5-12 2.5 6H21"/></svg>);
 
 const NAV = [
   { to: "/", label: "Overview", icon: <IconHome />, end: true },
@@ -22,6 +23,7 @@ const NAV = [
   { to: "/sources", label: "Source Performance", icon: <IconSources />, end: false },
   { to: "/data-quality", label: "Data Quality", icon: <IconSearch />, end: false },
   { to: "/self-healing", label: "Self-Healing", icon: <IconHeal />, end: false },
+  { to: "/pipeline", label: "Pipeline", icon: <IconPipeline />, end: false },
   { to: "/upload", label: "Upload Leads", icon: <IconUpload />, end: false },
 ];
 
@@ -33,6 +35,7 @@ const SUBTITLES: Record<string, [string, string]> = {
   "/sources": ["Source Performance", "Which feeds bring quality — and which bring junk"],
   "/data-quality": ["Data Quality", "What’s failing, and where the mess comes from"],
   "/self-healing": ["Self-Healing", "The pipeline repairing its own code"],
+  "/pipeline": ["Pipeline", "Every ingest run — records in, kept, and time taken"],
   "/upload": ["Upload Leads", "Drop any CSV and let QuaLead AI sort it out"],
 };
 

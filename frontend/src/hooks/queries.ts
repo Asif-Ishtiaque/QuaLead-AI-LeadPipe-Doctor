@@ -58,6 +58,9 @@ export const useCallList = (limit = 20) =>
 export const useSourcePerformance = () =>
   useQuery({ queryKey: ["source-performance"], queryFn: api.sourcePerformance, ...live });
 
+export const usePipelineRuns = (limit = 20) =>
+  useQuery({ queryKey: ["pipeline-runs", limit], queryFn: () => api.pipelineRuns(limit), ...live });
+
 // Set a lead's disposition; refresh the stats/overview counts on success.
 export const useSetDisposition = () => {
   const qc = useQueryClient();
